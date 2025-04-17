@@ -1,4 +1,4 @@
-// api/calculate.js
+// api/calculate.js 
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -52,9 +52,9 @@ export default async function handler(req, res) {
   // ✅ Step 3: Calculate flight time and price
   const results = jetsNearby.map((jet) => {
     const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
-    const speed = jet.speed_knots || jet.speed || null;
+    const knots = jet.speed_knots || jet.speed || null;
 
-    if (!speed || speed === 0) {
+    if (!knots || knots === 0) {
       return {
         jet_id: jet.id,
         model: jet.name || null,
@@ -66,7 +66,8 @@ export default async function handler(req, res) {
       };
     }
 
-    const flightTime = distance / speed;
+    const speed_kmh = knots * 1.852; // ✅ conversione da nodi a km/h
+    const flightTime = distance / speed_kmh;
     const price = jet.hourly_rate * flightTime * 2;
 
     return {
