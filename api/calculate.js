@@ -39,7 +39,7 @@ export default async function handler(req, res) {
   }
 
   // Step 1: Ottieni tutti i jet da Supabase
-  const { data: jet, error } = await supabase.from('jet').select('*');
+  const { data: jets, error } = await supabase.from('jet').select('*');
   if (error) return res.status(500).json({ error: error.message });
 
   // Step 2: Filtra jet con home base entro 500km dalla partenza
