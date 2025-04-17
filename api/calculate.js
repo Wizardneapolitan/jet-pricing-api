@@ -57,7 +57,7 @@ export default async function handler(req, res) {
     if (!speed || speed === 0) {
       return {
         jet_id: jet.id,
-        model: jet.model || null,
+        model: jet.name || null,
         home_base: jet.homebase,
         distance_km: Math.round(distance),
         flight_time_h: null,
@@ -71,7 +71,7 @@ export default async function handler(req, res) {
 
     return {
       jet_id: jet.id,
-      model: jet.model || null,
+      model: jet.name || null,
       home_base: jet.homebase,
       distance_km: Math.round(distance),
       flight_time_h: flightTime.toFixed(2),
