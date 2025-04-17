@@ -7,7 +7,7 @@ const supabase = createClient(
 );
 
 function getDistanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth radius in km
+  const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
@@ -26,11 +26,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing departure or arrival' });
   }
 
-  // ✅ Converti sempre in MAIUSCOLO per sicurezza
-  const departureCode = departure.toUpperCase();
-  const arrivalCode = arrival.toUpperCase();
-
-  // ✅ Carica tutti gli aeroporti da Supabase
+  // ✅ Step 1: carica aeroporti da Supabase
   const { data: airports, error: airportError } = await supabase
     .from('Airport 2')
     .select('ident, latitude, longitude');
@@ -39,23 +35,30 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: airportError.message });
   }
 
-  // ✅ Mappa degli aeroporti per codice
+  // ✅ Step 2: mappa dinamica ICAO -> coordinate
   const AIRPORTS = {};
   airports.forEach((a) => {
     AIRPORTS[a.ident] = { lat: a.latitude, lon: a.longitude };
   });
 
-  const dep = AIRPORTS[departureCode];
-  const arr = AIRPORTS[arrivalCode];
+  const dep = AIRPORTS[departure];
+  const arr = AIRPORTS[arrival];
+
   if (!dep || !arr) {
-    return res.status(400).json({ error: 'Unknown airport code' });
+    return res.status(400).json({
+      error: 'Unknown airport code',
+      missing: {
+        departure_found: !!dep,
+        arrival_found: !!arr,
+      },
+    });
   }
 
-  // ✅ Step 1: Ottieni tutti i jet
+  // ✅ Step 3: carica jet
   const { data: jets, error: jetError } = await supabase.from('jet').select('*');
   if (jetError) return res.status(500).json({ error: jetError.message });
 
-  // ✅ Step 2: Filtra jet entro 500 km dalla homebase
+  // ✅ Step 4: filtra per homebase vicino a partenza
   const jetsNearby = jets.filter((jet) => {
     const base = AIRPORTS[jet.homebase];
     if (!base) return false;
@@ -63,10 +66,9 @@ export default async function handler(req, res) {
     return d <= 500;
   });
 
-  // ✅ Step 3: Calcolo distanza, tempo e prezzo
-  const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
-
+  // ✅ Step 5: calcola distanza, tempo e prezzo
   const results = jetsNearby.map((jet) => {
+    const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
     const knots = jet.speed_knots || jet.speed || null;
 
     if (!knots || knots === 0) {
@@ -81,8 +83,8 @@ export default async function handler(req, res) {
       };
     }
 
-    const speedKmh = knots * 1.852;
-    const flightTime = distance / speedKmh;
+    const speed_kmh = knots * 1.852;
+    const flightTime = distance / speed_kmh;
     const price = jet.hourly_rate * flightTime * 2;
 
     return {
