@@ -56,9 +56,7 @@ export default async function handler(req, res) {
 
       if (dep && arr) {
         const { data: jets, error: jetError } = await supabase.from('jet').select('*');
-        if (jetError) {
-          return res.status(500).json({ error: jetError.message });
-        }
+        if (jetError) return res.status(500).json({ error: jetError.message });
 
         const uniqueHomebases = [...new Set(jets.map(jet =>
           jet.homebase ? jet.homebase.trim().toUpperCase() : null
@@ -69,9 +67,7 @@ export default async function handler(req, res) {
           .select('id, ident, latitude, longitude')
           .in('ident', uniqueHomebases);
 
-        if (baseError) {
-          return res.status(500).json({ error: baseError.message });
-        }
+        if (baseError) return res.status(500).json({ error: baseError.message });
 
         baseAirports.forEach(a => {
           if (a.ident && a.latitude && a.longitude) {
@@ -109,6 +105,7 @@ export default async function handler(req, res) {
               distance_km: Math.round(distance),
               flight_time_h: null,
               flight_time_min: null,
+              flight_time_formatted: null,
               price: null,
               warning: 'Missing or invalid speed',
             };
@@ -117,6 +114,9 @@ export default async function handler(req, res) {
           const speed_kmh = knots * 1.852;
           const flightTime = distance / speed_kmh;
           const flightTimeMin = Math.round(flightTime * 60);
+          const hours = Math.floor(flightTimeMin / 60);
+          const minutes = flightTimeMin % 60;
+          const flightTimeFormatted = `${hours}h ${minutes.toString().padStart(2, '0')}min`;
           const price = jet.hourly_rate * flightTime * 2;
 
           return {
@@ -126,6 +126,7 @@ export default async function handler(req, res) {
             distance_km: Math.round(distance),
             flight_time_h: flightTime.toFixed(2),
             flight_time_min: flightTimeMin,
+            flight_time_formatted: flightTimeFormatted,
             price: Math.round(price),
           };
         });
@@ -136,7 +137,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Fallback: ICAO lookup non trovato
     return res.status(400).json({
       error: 'Unknown airport code',
       missing: {
