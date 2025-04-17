@@ -7,7 +7,7 @@ const supabase = createClient(
 );
 
 function getDistanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth radius in km
+  const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
@@ -26,12 +26,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing departure or arrival' });
   }
 
-  const departureCode = departure.trim().toUpperCase();
-  const arrivalCode = arrival.trim().toUpperCase();
+  const depCode = departure.trim().toUpperCase();
+  const arrCode = arrival.trim().toUpperCase();
 
-  // ✅ Step 1: Fetch all airports
+  // ✅ Corretto uso del nome della tabella con spazio
   const { data: airports, error: airportError } = await supabase
-    .from('"Airport 2"') // usa le virgolette se il nome contiene spazi
+    .from('Airport 2')
     .select('ident, latitude, longitude');
 
   if (airportError) return res.status(500).json({ error: airportError.message });
@@ -46,8 +46,8 @@ export default async function handler(req, res) {
     }
   });
 
-  const dep = AIRPORTS[departureCode];
-  const arr = AIRPORTS[arrivalCode];
+  const dep = AIRPORTS[depCode];
+  const arr = AIRPORTS[arrCode];
 
   if (!dep || !arr) {
     return res.status(400).json({
@@ -59,11 +59,9 @@ export default async function handler(req, res) {
     });
   }
 
-  // ✅ Step 2: Fetch all jets
   const { data: jets, error: jetError } = await supabase.from('jet').select('*');
   if (jetError) return res.status(500).json({ error: jetError.message });
 
-  // ✅ Step 3: Filter jets with home base within 500 km of departure
   const jetsNearby = jets.filter((jet) => {
     const base = AIRPORTS[jet.homebase?.trim()?.toUpperCase()];
     if (!base) return false;
@@ -71,7 +69,6 @@ export default async function handler(req, res) {
     return d <= 500;
   });
 
-  // ✅ Step 4: Calculate distance, time, price
   const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
   const results = jetsNearby.map((jet) => {
     const knots = jet.speed_knots || jet.speed || null;
@@ -106,4 +103,3 @@ export default async function handler(req, res) {
 
   return res.status(200).json({ jets: results });
 }
-
