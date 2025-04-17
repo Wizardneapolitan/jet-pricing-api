@@ -30,19 +30,15 @@ export default async function handler(req, res) {
     const depCode = departure.trim().toUpperCase();
     const arrCode = arrival.trim().toUpperCase();
     
-    console.log(`Looking for airports: ${depCode} and ${arrCode}`);
-    
-    // Verifica se la tabella esiste
+    // Usa virgolette doppie attorno al nome della tabella con spazio
     const { data: airports, error: airportError } = await supabase
-      .from('Airport 2')
+      .from('"Airport 2"')
       .select('ident, latitude, longitude');
       
     if (airportError) {
       console.error('Airport query error:', airportError);
       return res.status(500).json({ error: airportError.message });
     }
-    
-    console.log(`Loaded ${airports?.length || 0} airports from database`);
     
     const AIRPORTS = {};
     airports.forEach((a) => {
@@ -55,9 +51,6 @@ export default async function handler(req, res) {
       }
     });
     
-    console.log(`AIRPORTS dictionary contains ${Object.keys(AIRPORTS).length} entries`);
-    console.log(`Searching for ${depCode} and ${arrCode}`);
-    
     const dep = AIRPORTS[depCode];
     const arr = AIRPORTS[arrCode];
     
@@ -69,6 +62,7 @@ export default async function handler(req, res) {
           arrival: arrCode,
           departure_found: !!dep,
           arrival_found: !!arr,
+          airports_count: Object.keys(AIRPORTS).length
         }
       });
     }
@@ -76,28 +70,19 @@ export default async function handler(req, res) {
     const { data: jets, error: jetError } = await supabase.from('jet').select('*');
     
     if (jetError) {
-      console.error('Jet query error:', jetError);
       return res.status(500).json({ error: jetError.message });
     }
     
-    console.log(`Found ${jets.length} jets in database`);
-    
     const jetsNearby = jets.filter((jet) => {
-      // Safe handling of homebase
       const homebase = jet.homebase ? jet.homebase.trim().toUpperCase() : null;
       if (!homebase) return false;
       
       const base = AIRPORTS[homebase];
-      if (!base) {
-        console.log(`Warning: Jet ID ${jet.id} has unknown homebase: ${homebase}`);
-        return false;
-      }
+      if (!base) return false;
       
       const d = getDistanceKm(dep.lat, dep.lon, base.lat, base.lon);
       return d <= 500;
     });
-    
-    console.log(`Found ${jetsNearby.length} jets nearby departure airport`);
     
     const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
     
