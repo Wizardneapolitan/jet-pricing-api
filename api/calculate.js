@@ -7,7 +7,7 @@ const supabase = createClient(
 );
 
 function getDistanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371; // raggio terrestre in km
+  const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
@@ -35,10 +35,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: airportError.message });
   }
 
-  // 2. Costruisci la mappa dinamica degli aeroporti
+  // 2. Costruisci la mappa dinamica degli aeroporti con nomi di colonna corretti
   const AIRPORTS = {};
   airports.forEach((a) => {
-    AIRPORTS[a.ident] = { lat: a.latitude_deg, lon: a.longitude_deg };
+    AIRPORTS[a.ident] = { lat: a.latitude, lon: a.longitude };
   });
 
   const dep = AIRPORTS[departure];
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Unknown airport code' });
   }
 
-  // 3. Ottieni i jet da Supabase
+  // 3. Carica i jet da Supabase
   const { data: jets, error: jetError } = await supabase
     .from('jet')
     .select('*');
@@ -56,17 +56,17 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: jetError.message });
   }
 
-  // 4. Filtra i jet entro 500km dalla partenza
+  // 4. Filtra jet con home_base entro 500km dalla partenza
   const jetsNearby = jets.filter((jet) => {
     const base = AIRPORTS[jet.home_base];
     if (!base) return false;
-    const distanceFromBase = getDistanceKm(dep.lat, dep.lon, base.lat, base.lon);
-    return distanceFromBase <= 500;
+    const d = getDistanceKm(dep.lat, dep.lon, base.lat, base.lon);
+    return d <= 500;
   });
 
-  // 5. Calcola distanza e prezzo stimato
+  // 5. Calcola distanza e prezzo
+  const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
   const results = jetsNearby.map((jet) => {
-    const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
     const flightTime = distance / jet.speed;
     const price = jet.hourly_rate * flightTime * 2;
 
@@ -81,7 +81,5 @@ export default async function handler(req, res) {
   });
 
   results.sort((a, b) => a.price - b.price);
-
   return res.status(200).json({ jets: results });
 }
-
