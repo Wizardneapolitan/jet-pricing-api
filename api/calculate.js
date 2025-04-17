@@ -1,4 +1,3 @@
-// api/calculate.js
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -7,35 +6,34 @@ const supabase = createClient(
 );
 
 function getDistanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
+  const R = 6371; // Earth radius km
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLon / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
 
 export default async function handler(req, res) {
-  const { departure, arrival, pax, date } = req.body;
+  const { departure, arrival, pax } = req.body;
 
   if (!departure || !arrival) {
     return res.status(400).json({ error: 'Missing departure or arrival' });
   }
 
-  // 1. Carica gli aeroporti da Supabase
+  // ✅ Step 1: carica gli aeroporti da Supabase (Airport 2)
   const { data: airports, error: airportError } = await supabase
     .from('Airport 2')
     .select('*');
-
   if (airportError) {
     return res.status(500).json({ error: airportError.message });
   }
 
-  // 2. Costruisci la mappa dinamica degli aeroporti con nomi di colonna corretti
+  // ✅ Step 2: crea mappa codice aeroporto → coordinate
   const AIRPORTS = {};
   airports.forEach((a) => {
     AIRPORTS[a.ident] = { lat: a.latitude, lon: a.longitude };
@@ -43,20 +41,18 @@ export default async function handler(req, res) {
 
   const dep = AIRPORTS[departure];
   const arr = AIRPORTS[arrival];
+
   if (!dep || !arr) {
     return res.status(400).json({ error: 'Unknown airport code' });
   }
 
-  // 3. Carica i jet da Supabase
-  const { data: jets, error: jetError } = await supabase
-    .from('jet')
-    .select('*');
-
+  // ✅ Step 3: carica i jet da Supabase
+  const { data: jets, error: jetError } = await supabase.from('jet').select('*');
   if (jetError) {
     return res.status(500).json({ error: jetError.message });
   }
 
-  // 4. Filtra jet con home_base entro 500km dalla partenza
+  // ✅ Step 4: filtra jet entro 500km dall’home base
   const jetsNearby = jets.filter((jet) => {
     const base = AIRPORTS[jet.home_base];
     if (!base) return false;
@@ -64,12 +60,11 @@ export default async function handler(req, res) {
     return d <= 500;
   });
 
-  // 5. Calcola distanza e prezzo
-  const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
+  // ✅ Step 5: calcolo prezzi
   const results = jetsNearby.map((jet) => {
-    const flightTime = distance / jet.speed;
+    const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
+    const flightTime = distance / jet.speed_knots;
     const price = jet.hourly_rate * flightTime * 2;
-
     return {
       jet_id: jet.id,
       model: jet.name,
@@ -81,5 +76,7 @@ export default async function handler(req, res) {
   });
 
   results.sort((a, b) => a.price - b.price);
+
   return res.status(200).json({ jets: results });
 }
+
