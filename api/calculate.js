@@ -6,11 +6,6 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-const AIRPORTS = {
-  LIML: { lat: 45.4451, lon: 9.2767 },   // Milano Linate
-  LFPB: { lat: 48.9694, lon: 2.4414 },   // Paris Le Bourget
-};
-
 function getDistanceKm(lat1, lon1, lat2, lon2) {
   const R = 6371; // Earth radius in km
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -30,6 +25,18 @@ export default async function handler(req, res) {
   if (!departure || !arrival) {
     return res.status(400).json({ error: 'Missing departure or arrival' });
   }
+
+  // ✅ Step 0: Carica aeroporti da Supabase
+  const { data: airports, error: airportError } = await supabase
+    .from('Airport 2')
+    .select('*');
+  if (airportError) return res.status(500).json({ error: airportError.message });
+
+  // ✅ Costruisci mappa: codice ident → coordinate
+  const AIRPORTS = {};
+  airports.forEach((a) => {
+    AIRPORTS[a.ident] = { lat: a.latitude, lon: a.longitude };
+  });
 
   const dep = AIRPORTS[departure];
   const arr = AIRPORTS[arrival];
@@ -66,7 +73,7 @@ export default async function handler(req, res) {
       };
     }
 
-    const speed_kmh = knots * 1.852; // ✅ conversione da nodi a km/h
+    const speed_kmh = knots * 1.852; // Conversione nodi → km/h
     const flightTime = distance / speed_kmh;
     const price = jet.hourly_rate * flightTime * 2;
 
