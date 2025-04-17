@@ -20,86 +20,121 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
 }
 
 export default async function handler(req, res) {
-  const { departure, arrival, pax, date } = req.body;
-
-  if (!departure || !arrival) {
-    return res.status(400).json({ error: 'Missing departure or arrival' });
-  }
-
-  const depCode = departure.trim().toUpperCase();
-  const arrCode = arrival.trim().toUpperCase();
-
-  // ✅ Corretto uso del nome della tabella con spazio
-  const { data: airports, error: airportError } = await supabase
-    .from('Airport 2')
-    .select('ident, latitude, longitude');
-
-  if (airportError) return res.status(500).json({ error: airportError.message });
-
-  const AIRPORTS = {};
-  airports.forEach((a) => {
-    if (a.ident && a.latitude && a.longitude) {
-      AIRPORTS[a.ident.trim().toUpperCase()] = {
-        lat: a.latitude,
-        lon: a.longitude,
-      };
+  try {
+    const { departure, arrival, pax, date } = req.body;
+    
+    if (!departure || !arrival) {
+      return res.status(400).json({ error: 'Missing departure or arrival' });
     }
-  });
-
-  const dep = AIRPORTS[depCode];
-  const arr = AIRPORTS[arrCode];
-
-  if (!dep || !arr) {
-    return res.status(400).json({
-      error: 'Unknown airport code',
-      missing: {
-        departure_found: !!dep,
-        arrival_found: !!arr,
-      },
+    
+    const depCode = departure.trim().toUpperCase();
+    const arrCode = arrival.trim().toUpperCase();
+    
+    console.log(`Looking for airports: ${depCode} and ${arrCode}`);
+    
+    // Verifica se la tabella esiste
+    const { data: airports, error: airportError } = await supabase
+      .from('Airport 2')
+      .select('ident, latitude, longitude');
+      
+    if (airportError) {
+      console.error('Airport query error:', airportError);
+      return res.status(500).json({ error: airportError.message });
+    }
+    
+    console.log(`Loaded ${airports?.length || 0} airports from database`);
+    
+    const AIRPORTS = {};
+    airports.forEach((a) => {
+      if (a.ident && a.latitude && a.longitude) {
+        const code = a.ident.trim().toUpperCase();
+        AIRPORTS[code] = {
+          lat: parseFloat(a.latitude),
+          lon: parseFloat(a.longitude),
+        };
+      }
     });
-  }
-
-  const { data: jets, error: jetError } = await supabase.from('jet').select('*');
-  if (jetError) return res.status(500).json({ error: jetError.message });
-
-  const jetsNearby = jets.filter((jet) => {
-    const base = AIRPORTS[jet.homebase?.trim()?.toUpperCase()];
-    if (!base) return false;
-    const d = getDistanceKm(dep.lat, dep.lon, base.lat, base.lon);
-    return d <= 500;
-  });
-
-  const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
-  const results = jetsNearby.map((jet) => {
-    const knots = jet.speed_knots || jet.speed || null;
-
-    if (!knots || knots === 0) {
+    
+    console.log(`AIRPORTS dictionary contains ${Object.keys(AIRPORTS).length} entries`);
+    console.log(`Searching for ${depCode} and ${arrCode}`);
+    
+    const dep = AIRPORTS[depCode];
+    const arr = AIRPORTS[arrCode];
+    
+    if (!dep || !arr) {
+      return res.status(400).json({
+        error: 'Unknown airport code',
+        missing: {
+          departure: depCode,
+          arrival: arrCode,
+          departure_found: !!dep,
+          arrival_found: !!arr,
+        }
+      });
+    }
+    
+    const { data: jets, error: jetError } = await supabase.from('jet').select('*');
+    
+    if (jetError) {
+      console.error('Jet query error:', jetError);
+      return res.status(500).json({ error: jetError.message });
+    }
+    
+    console.log(`Found ${jets.length} jets in database`);
+    
+    const jetsNearby = jets.filter((jet) => {
+      // Safe handling of homebase
+      const homebase = jet.homebase ? jet.homebase.trim().toUpperCase() : null;
+      if (!homebase) return false;
+      
+      const base = AIRPORTS[homebase];
+      if (!base) {
+        console.log(`Warning: Jet ID ${jet.id} has unknown homebase: ${homebase}`);
+        return false;
+      }
+      
+      const d = getDistanceKm(dep.lat, dep.lon, base.lat, base.lon);
+      return d <= 500;
+    });
+    
+    console.log(`Found ${jetsNearby.length} jets nearby departure airport`);
+    
+    const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
+    
+    const results = jetsNearby.map((jet) => {
+      const knots = jet.speed_knots || jet.speed || null;
+      
+      if (!knots || knots === 0) {
+        return {
+          jet_id: jet.id,
+          model: jet.name || null,
+          home_base: jet.homebase,
+          distance_km: Math.round(distance),
+          flight_time_h: null,
+          price: null,
+          warning: 'Missing or invalid speed',
+        };
+      }
+      
+      const speed_kmh = knots * 1.852;
+      const flightTime = distance / speed_kmh;
+      const price = jet.hourly_rate * flightTime * 2;
+      
       return {
         jet_id: jet.id,
         model: jet.name || null,
         home_base: jet.homebase,
         distance_km: Math.round(distance),
-        flight_time_h: null,
-        price: null,
-        warning: 'Missing or invalid speed',
+        flight_time_h: flightTime.toFixed(2),
+        price: Math.round(price),
       };
-    }
-
-    const speed_kmh = knots * 1.852;
-    const flightTime = distance / speed_kmh;
-    const price = jet.hourly_rate * flightTime * 2;
-
-    return {
-      jet_id: jet.id,
-      model: jet.name || null,
-      home_base: jet.homebase,
-      distance_km: Math.round(distance),
-      flight_time_h: flightTime.toFixed(2),
-      price: Math.round(price),
-    };
-  });
-
-  results.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
-
-  return res.status(200).json({ jets: results });
+    });
+    
+    results.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    
+    return res.status(200).json({ jets: results });
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
 }
