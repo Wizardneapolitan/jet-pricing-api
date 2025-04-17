@@ -44,7 +44,7 @@ export default async function handler(req, res) {
 
   // Step 2: Filtra jet con home base entro 500km dalla partenza
   const jetsNearby = jets.filter((jet) => {
-    const base = AIRPORTS[jet.home_base];
+    const base = AIRPORTS[jet.homebase];
     if (!base) return false;
     const d = getDistanceKm(dep.lat, dep.lon, base.lat, base.lon);
     return d <= 500;
