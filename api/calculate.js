@@ -7,7 +7,7 @@ const supabase = createClient(
 );
 
 function getDistanceKm(lat1, lon1, lat2, lon2) {
-  const R = 6371;
+  const R = 6371; // Raggio terrestre in km
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
@@ -30,16 +30,17 @@ export default async function handler(req, res) {
     const depCode = departure.trim().toUpperCase();
     const arrCode = arrival.trim().toUpperCase();
     
-    // Usa virgolette doppie attorno al nome della tabella con spazio
+    // Utilizzo diretto del nome della tabella senza virgolette aggiuntive
     const { data: airports, error: airportError } = await supabase
-      .from('"Airport 2"')
-      .select('ident, latitude, longitude');
+      .from('Airport 2')
+      .select('*');
       
     if (airportError) {
       console.error('Airport query error:', airportError);
       return res.status(500).json({ error: airportError.message });
     }
     
+    // Costruisci il dizionario degli aeroporti
     const AIRPORTS = {};
     airports.forEach((a) => {
       if (a.ident && a.latitude && a.longitude) {
@@ -62,17 +63,19 @@ export default async function handler(req, res) {
           arrival: arrCode,
           departure_found: !!dep,
           arrival_found: !!arr,
-          airports_count: Object.keys(AIRPORTS).length
+          airports_loaded: Object.keys(AIRPORTS).length
         }
       });
     }
     
+    // Carica i jet
     const { data: jets, error: jetError } = await supabase.from('jet').select('*');
     
     if (jetError) {
       return res.status(500).json({ error: jetError.message });
     }
     
+    // Filtra jet nelle vicinanze (500km)
     const jetsNearby = jets.filter((jet) => {
       const homebase = jet.homebase ? jet.homebase.trim().toUpperCase() : null;
       if (!homebase) return false;
@@ -84,8 +87,10 @@ export default async function handler(req, res) {
       return d <= 500;
     });
     
+    // Calcola la distanza tra aeroporti
     const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
     
+    // Elabora risultati per ogni jet
     const results = jetsNearby.map((jet) => {
       const knots = jet.speed_knots || jet.speed || null;
       
@@ -101,9 +106,9 @@ export default async function handler(req, res) {
         };
       }
       
-      const speed_kmh = knots * 1.852;
+      const speed_kmh = knots * 1.852; // Conversione nodi a km/h
       const flightTime = distance / speed_kmh;
-      const price = jet.hourly_rate * flightTime * 2;
+      const price = jet.hourly_rate * flightTime * 2; // Andata e ritorno
       
       return {
         jet_id: jet.id,
@@ -115,6 +120,7 @@ export default async function handler(req, res) {
       };
     });
     
+    // Ordina per prezzo
     results.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
     
     return res.status(200).json({ jets: results });
