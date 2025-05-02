@@ -19,11 +19,11 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Funzione per convertire il nome della città in codice ICAO
+// Funzione migliorata per convertire nomi di città/aeroporti in codici ICAO
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
   
-  // Normalizza il nome della città
+  // Normalizza il testo di input
   const normalizedCity = cityName.toLowerCase().trim();
   
   // Se è già un codice ICAO, restituiscilo direttamente
@@ -34,78 +34,67 @@ async function getCityToICAO(cityName) {
   
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
   
-  // Mappa di fallback per le città più comuni
-  // Questa viene usata solo se la ricerca in Supabase fallisce
-  const fallbackMap = {
-    'milano': 'LIML',
-    'roma': 'LIRF',
-    'napoli': 'LIRN',
-    'torino': 'LIMF',
-    'venezia': 'LIPZ',
-    'firenze': 'LIRQ',
-    'catania': 'LICC',
-    'palermo': 'LICJ',
-    'ibiza': 'LEIB',
-    'nizza': 'LFMN',
-    'cannes': 'LFMN', // Cannes usa l'aeroporto di Nizza
-    'malaga': 'LEMG',
-    'lugano': 'LSZA',
-    'barcellona': 'LEBL',
-    'madrid': 'LEMD',
-    'londra': 'EGLL',
-    'parigi': 'LFPG',
-    'berlino': 'EDDB',
-    'amsterdam': 'EHAM',
-    'monaco': 'EDDM',
-    'salerno': 'LIRI'
-  };
-  
   try {
-    // Prova a cercare nel database per nome città/comune
-    const { data: municipalityData, error: municipalityError } = await supabase
+    // Strategia 1: Cerca per corrispondenza esatta del nome dell'aeroporto
+    let { data: exactNameData, error: exactNameError } = await supabase
       .from('Airport 2')
-      .select('ident, name, municipality, region')
-      .ilike('municipality', `%${normalizedCity}%`)
-      .limit(1);
+      .select('ident, name')
+      .ilike('name', normalizedCity);
+    
+    if (!exactNameError && exactNameData && exactNameData.length > 0) {
+      console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
+      return exactNameData[0].ident;
+    }
+    
+    // Strategia 2: Cerca per nome dell'aeroporto parziale
+    let { data: partialNameData, error: partialNameError } = await supabase
+      .from('Airport 2')
+      .select('ident, name')
+      .ilike('name', `%${normalizedCity}%`);
+    
+    if (!partialNameError && partialNameData && partialNameData.length > 0) {
+      console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
+      return partialNameData[0].ident;
+    }
+    
+    // Strategia 3: Cerca per comune/città
+    let { data: municipalityData, error: municipalityError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, municipality')
+      .ilike('municipality', normalizedCity);
     
     if (!municipalityError && municipalityData && municipalityData.length > 0) {
-      console.log(`Aeroporto trovato cercando per comune: ${municipalityData[0].ident}`);
-      return municipalityData[0].ident.trim().toUpperCase();
+      console.log(`Trovato per comune esatto: ${municipalityData[0].ident} (${municipalityData[0].name})`);
+      return municipalityData[0].ident;
     }
     
-    // Prova a cercare nel database per nome aeroporto
-    const { data: nameData, error: nameError } = await supabase
+    // Strategia 4: Cerca per comune/città parziale
+    let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
       .from('Airport 2')
-      .select('ident, name, municipality, region')
-      .ilike('name', `%${normalizedCity}%`)
-      .limit(1);
+      .select('ident, name, municipality')
+      .ilike('municipality', `%${normalizedCity}%`);
     
-    if (!nameError && nameData && nameData.length > 0) {
-      console.log(`Aeroporto trovato cercando per nome: ${nameData[0].ident}`);
-      return nameData[0].ident.trim().toUpperCase();
+    if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
+      console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
+      return partialMunicipalityData[0].ident;
     }
     
-    // Cerca nella mappa di fallback
-    for (const [key, value] of Object.entries(fallbackMap)) {
-      if (normalizedCity.includes(key)) {
-        console.log(`Aeroporto trovato nella mappa di fallback: ${key} -> ${value}`);
-        return value;
-      }
+    // Strategia 5: Cerca in qualsiasi campo testuale
+    let { data: anyFieldData, error: anyFieldError } = await supabase
+      .from('Airport 2')
+      .select('ident, name')
+      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%`);
+    
+    if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
+      console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
+      return anyFieldData[0].ident;
     }
     
+    // Se tutto fallisce, restituisci null
     console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
     return null;
   } catch (error) {
     console.error(`Errore nella ricerca dell'aeroporto per ${normalizedCity}:`, error);
-    
-    // In caso di errore, prova con la mappa di fallback
-    for (const [key, value] of Object.entries(fallbackMap)) {
-      if (normalizedCity.includes(key)) {
-        console.log(`Fallback dopo errore: ${key} -> ${value}`);
-        return value;
-      }
-    }
-    
     return null;
   }
 }
@@ -134,20 +123,22 @@ export default async function handler(req, res) {
       });
     }
     
-    // Converti in codici ICAO se necessario
-    const depCode = await getCityToICAO(departureInput) || departureInput.trim().toUpperCase();
-    const arrCode = await getCityToICAO(arrivalInput) || arrivalInput.trim().toUpperCase();
+    // Converti nomi delle città in codici ICAO
+    console.log(`Conversione città a ICAO: ${departureInput}, ${arrivalInput}`);
+    const depCode = await getCityToICAO(departureInput);
+    const arrCode = await getCityToICAO(arrivalInput);
     
-    console.log(`Conversione completata: ${departureInput} -> ${depCode}, ${arrivalInput} -> ${arrCode}`);
+    console.log(`Risultato conversione: ${departureInput} -> ${depCode}, ${arrivalInput} -> ${arrCode}`);
     
     if (!depCode || !arrCode) {
       return res.status(400).json({
-        error: 'Impossibile risolvere i nomi delle città in codici aeroportuali',
-        provided: {
+        error: 'Codice aeroporto sconosciuto',
+        missing: {
           departure: departureInput,
-          arrival: arrivalInput
-        },
-        suggestion: "Prova a specificare il nome di una città più grande nelle vicinanze"
+          arrival: arrivalInput,
+          departure_code: depCode,
+          arrival_code: arrCode
+        }
       });
     }
 
@@ -163,7 +154,7 @@ export default async function handler(req, res) {
     }
 
     if (!specificAirports || specificAirports.length < 2) {
-      console.error('Aeroporti non trovati:', { depCode, arrCode, results: specificAirports });
+      console.error('Aeroporti non trovati:', { depCode, arrCode, results: specificAirports?.length || 0 });
       return res.status(400).json({
         error: 'Codice aeroporto sconosciuto',
         missing: {
@@ -212,6 +203,37 @@ export default async function handler(req, res) {
         lon: parseFloat(a.longitude),
       };
     });
+
+    // Processa data e formatta in YYYY-MM-DD
+    let formattedDate = date;
+    if (date) {
+      try {
+        const currentYear = 2025; // Anno corrente
+        let dateObj;
+        
+        if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          // Già in formato ISO
+          dateObj = new Date(date);
+        } else if (date.match(/\d{1,2}\s+\w+/)) {
+          // Formato "15 luglio", aggiungi anno corrente
+          const withYear = `${date} ${currentYear}`;
+          dateObj = new Date(withYear);
+        } else {
+          dateObj = new Date(date);
+        }
+        
+        if (!isNaN(dateObj.getTime())) {
+          // Assicurati che l'anno sia corrente se non è specificato
+          if (dateObj.getFullYear() < currentYear) {
+            dateObj.setFullYear(currentYear);
+          }
+          
+          formattedDate = dateObj.toISOString().split('T')[0];
+        }
+      } catch (error) {
+        console.error('Errore nella formattazione della data:', error);
+      }
+    }
 
     // Filter jets with homebase within 500km
     const jetsNearby = jets.filter((jet) => {
@@ -279,7 +301,7 @@ export default async function handler(req, res) {
         departure_name: dep.name,
         arrival_icao: arrCode,
         arrival_name: arr.name,
-        date: date || null,
+        date: formattedDate || null,
         time: time || null,
         pax: pax || 4
       },
