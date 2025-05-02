@@ -20,6 +20,7 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
 }
 
 // Funzione migliorata per convertire nomi di città/aeroporti in codici ICAO
+// COMPLETAMENTE DINAMICA - nessuna mappa statica
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
   
@@ -35,55 +36,87 @@ async function getCityToICAO(cityName) {
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
   
   try {
-    // Strategia 1: Cerca per corrispondenza esatta del nome dell'aeroporto
+    // Strategia 1: Cerca aeroporti principali (large_airport) per la città specificata
+    let { data: majorAirports, error: majorError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, type, municipality')
+      .eq('type', 'large_airport')
+      .or(`municipality.ilike.${normalizedCity},name.ilike.%${normalizedCity}%`)
+      .limit(1);
+    
+    if (!majorError && majorAirports && majorAirports.length > 0) {
+      console.log(`Trovato aeroporto principale: ${majorAirports[0].ident} (${majorAirports[0].name})`);
+      return majorAirports[0].ident;
+    }
+    
+    // Strategia 2: Cerca aeroporti medi (medium_airport) per la città specificata
+    let { data: mediumAirports, error: mediumError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, type, municipality')
+      .eq('type', 'medium_airport')
+      .or(`municipality.ilike.${normalizedCity},name.ilike.%${normalizedCity}%`)
+      .limit(1);
+    
+    if (!mediumError && mediumAirports && mediumAirports.length > 0) {
+      console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
+      return mediumAirports[0].ident;
+    }
+    
+    // Strategia 3: Cerca qualsiasi tipo di aeroporto con corrispondenza esatta del nome
     let { data: exactNameData, error: exactNameError } = await supabase
       .from('Airport 2')
       .select('ident, name')
-      .ilike('name', normalizedCity);
+      .ilike('name', normalizedCity)
+      .limit(1);
     
     if (!exactNameError && exactNameData && exactNameData.length > 0) {
       console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
       return exactNameData[0].ident;
     }
     
-    // Strategia 2: Cerca per nome dell'aeroporto parziale
+    // Strategia 4: Cerca qualsiasi tipo di aeroporto con corrispondenza esatta del comune
+    let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, municipality')
+      .ilike('municipality', normalizedCity)
+      .limit(1);
+    
+    if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
+      console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
+      return exactMunicipalityData[0].ident;
+    }
+    
+    // Strategia 5: Cerca qualsiasi tipo di aeroporto con corrispondenza parziale del nome
     let { data: partialNameData, error: partialNameError } = await supabase
       .from('Airport 2')
       .select('ident, name')
-      .ilike('name', `%${normalizedCity}%`);
+      .ilike('name', `%${normalizedCity}%`)
+      .limit(1);
     
     if (!partialNameError && partialNameData && partialNameData.length > 0) {
       console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
       return partialNameData[0].ident;
     }
     
-    // Strategia 3: Cerca per comune/città
-    let { data: municipalityData, error: municipalityError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, municipality')
-      .ilike('municipality', normalizedCity);
-    
-    if (!municipalityError && municipalityData && municipalityData.length > 0) {
-      console.log(`Trovato per comune esatto: ${municipalityData[0].ident} (${municipalityData[0].name})`);
-      return municipalityData[0].ident;
-    }
-    
-    // Strategia 4: Cerca per comune/città parziale
+    // Strategia 6: Cerca qualsiasi tipo di aeroporto con corrispondenza parziale del comune
     let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
-      .ilike('municipality', `%${normalizedCity}%`);
+      .ilike('municipality', `%${normalizedCity}%`)
+      .limit(1);
     
     if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
       console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
       return partialMunicipalityData[0].ident;
     }
     
-    // Strategia 5: Cerca in qualsiasi campo testuale
+    // Strategia 7: Ricerca più ampia in tutti i campi rilevanti
     let { data: anyFieldData, error: anyFieldError } = await supabase
       .from('Airport 2')
-      .select('ident, name')
-      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%`);
+      .select('ident, name, municipality')
+      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%,iso_region.ilike.%${normalizedCity}%`)
+      .order('type')
+      .limit(1);
     
     if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
       console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
