@@ -19,7 +19,7 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Funzione per convertire città in codici ICAO
+// Funzione migliorata per convertire città in codici ICAO
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
   
@@ -32,19 +32,46 @@ async function getCityToICAO(cityName) {
   }
   
   try {
-    // Cerca aeroporti che contengono il nome della città
-    const { data, error } = await supabase
+    console.log(`Cercando aeroporto per: ${normalizedCity}`);
+    
+    // Cerca aeroporti in diversi modi possibili
+    // 1. Cerca per nome dell'aeroporto
+    // 2. Cerca per nome della città/comune
+    // 3. Cerca per regione
+    // Questo approccio è molto più flessibile e potente
+    const { data: airportData, error: airportError } = await supabase
       .from('Airport 2')
       .select('*')
-      .ilike('name', `%${normalizedCity}%`)
+      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%`)
+      .order('type', { ascending: true })
+      .limit(5);
+    
+    if (airportError) {
+      console.error('Errore nella ricerca degli aeroporti:', airportError);
+      throw airportError;
+    }
+    
+    console.log(`Risultati della ricerca per ${normalizedCity}:`, airportData?.length || 0);
+    
+    if (airportData && airportData.length > 0) {
+      // Restituisci il primo risultato trovato
+      console.log(`Aeroporto trovato: ${airportData[0].name} (${airportData[0].ident})`);
+      return airportData[0].ident.trim().toUpperCase();
+    }
+    
+    // Ricerca secondaria: parola chiave più ampia
+    const { data: secondaryData, error: secondaryError } = await supabase
+      .from('Airport 2')
+      .select('*')
+      .or(`region.ilike.%${normalizedCity}%,iso_country.eq.${normalizedCity}`)
       .order('type', { ascending: true })
       .limit(1);
-    
-    if (error) throw error;
-    
-    if (data && data.length > 0) {
-      // La colonna del codice ICAO (seconda colonna)
-      return data[0].ident.trim().toUpperCase();
+      
+    if (secondaryError) {
+      console.error('Errore nella ricerca secondaria:', secondaryError);
+    } else if (secondaryData && secondaryData.length > 0) {
+      console.log(`Aeroporto trovato in ricerca secondaria: ${secondaryData[0].name} (${secondaryData[0].ident})`);
+      return secondaryData[0].ident.trim().toUpperCase();
     }
     
     // Fallback: mappa statica per aeroporti comuni
@@ -58,21 +85,49 @@ async function getCityToICAO(cityName) {
       'catania': 'LICC',
       'palermo': 'LICJ',
       'ibiza': 'LEIB',
-      'nizza': 'LFMN'
+      'nizza': 'LFMN',
+      'cannes': 'LFMN', // Cannes usa l'aeroporto di Nizza
+      'malaga': 'LEMG',
+      'lugano': 'LSZA',
+      'barcellona': 'LEBL',
+      'madrid': 'LEMD',
+      'londra': 'EGLL',
+      'parigi': 'LFPG',
+      'berlino': 'EDDB',
+      'amsterdam': 'EHAM',
+      'monaco': 'EDDM'
     };
     
     // Controlla se la città è nella mappa di fallback
     for (const [key, value] of Object.entries(fallbackMap)) {
       if (normalizedCity.includes(key)) {
+        console.log(`Aeroporto trovato nel fallback map: ${key} -> ${value}`);
         return value;
       }
     }
     
-    // Se tutto fallisce, restituisci la città originale in maiuscolo
-    return cityName.toUpperCase();
+    // Ultima possibilità: cerca un aeroporto qualsiasi nel paese/regione
+    const countryCode = normalizedCity.length === 2 ? normalizedCity.toUpperCase() : null;
+    if (countryCode) {
+      const { data: countryData } = await supabase
+        .from('Airport 2')
+        .select('*')
+        .eq('iso_country', countryCode)
+        .eq('type', 'large_airport')
+        .limit(1);
+        
+      if (countryData && countryData.length > 0) {
+        console.log(`Aeroporto trovato per paese ${countryCode}: ${countryData[0].name} (${countryData[0].ident})`);
+        return countryData[0].ident.trim().toUpperCase();
+      }
+    }
+    
+    // Se tutto fallisce, restituisci null e lascia che l'API gestisca l'errore
+    console.warn(`Nessun aeroporto trovato per ${cityName}`);
+    return null;
   } catch (err) {
-    console.error('Error converting city to ICAO:', err);
-    return cityName.toUpperCase(); // Fallback in caso di errore
+    console.error('Errore nella conversione da città a ICAO:', err);
+    return null;
   }
 }
 
@@ -104,14 +159,14 @@ function validateAndFormatDate(dateString) {
     
     // Verifica se la data è valida
     if (isNaN(date.getTime())) {
-      console.warn('Invalid date:', dateString);
+      console.warn('Data non valida:', dateString);
       return null;
     }
     
     // Formatta in YYYY-MM-DD
     return date.toISOString().split('T')[0];
   } catch (err) {
-    console.error('Error parsing date:', err);
+    console.error('Errore nel parsing della data:', err);
     return null;
   }
 }
@@ -132,16 +187,18 @@ function validateAndFormatTime(timeString) {
       }
     }
     
-    console.warn('Invalid time format:', timeString);
+    console.warn('Formato orario non valido:', timeString);
     return null;
   } catch (err) {
-    console.error('Error parsing time:', err);
+    console.error('Errore nel parsing dell\'orario:', err);
     return null;
   }
 }
 
 export default async function handler(req, res) {
   try {
+    console.log('Richiesta ricevuta:', req.body);
+    
     // Estrai i dati dalla richiesta
     let { departure, arrival, from, to, pax, date, time } = req.body;
     
@@ -153,13 +210,13 @@ export default async function handler(req, res) {
     // Verifica i dati di input
     if (!departureInput || !arrivalInput) {
       return res.status(400).json({ 
-        error: 'Missing departure or arrival city/airport',
+        error: 'Mancano dati di partenza o arrivo',
         required_format: {
-          from: "City name or ICAO code (e.g., 'Milano' or 'LIML')",
-          to: "City name or ICAO code (e.g., 'Ibiza' or 'LEIB')",
-          date: "Date in YYYY-MM-DD format (optional)",
-          time: "Time in HH:MM format (optional)",
-          pax: "Number of passengers (optional, default: 4)"
+          from: "Nome città o codice ICAO (es. 'Milano' o 'LIML')",
+          to: "Nome città o codice ICAO (es. 'Ibiza' o 'LEIB')",
+          date: "Data in formato YYYY-MM-DD (opzionale)",
+          time: "Orario in formato HH:MM (opzionale)",
+          pax: "Numero passeggeri (opzionale, default: 4)"
         }
       });
     }
@@ -170,11 +227,12 @@ export default async function handler(req, res) {
     
     if (!departureICAO || !arrivalICAO) {
       return res.status(400).json({ 
-        error: 'Could not resolve city names to airport codes',
+        error: 'Impossibile risolvere i nomi delle città in codici aeroportuali',
         provided: {
           departure: departureInput,
           arrival: arrivalInput
-        }
+        },
+        suggestion: "Prova a specificare il nome di una città più grande nelle vicinanze"
       });
     }
     
@@ -185,8 +243,8 @@ export default async function handler(req, res) {
     // Converti pax in numero se fornito, altrimenti usa il default
     const validatedPax = pax ? parseInt(pax) : 4;
     
-    console.log(`Converted: ${departureInput} -> ${departureICAO}, ${arrivalInput} -> ${arrivalICAO}`);
-    console.log(`Date: ${date} -> ${validatedDate}, Time: ${time} -> ${validatedTime}, Pax: ${validatedPax}`);
+    console.log(`Convertito: ${departureInput} -> ${departureICAO}, ${arrivalInput} -> ${arrivalICAO}`);
+    console.log(`Data: ${date} -> ${validatedDate}, Orario: ${time} -> ${validatedTime}, Pax: ${validatedPax}`);
 
     // Il resto del codice rimane invariato
     const depCode = departureICAO.trim().toUpperCase();
@@ -195,7 +253,7 @@ export default async function handler(req, res) {
     // Fetch departure and arrival airport info
     const { data: specificAirports, error: specificError } = await supabase
       .from('Airport 2')
-      .select('id, ident, latitude, longitude')
+      .select('id, ident, name, latitude, longitude')
       .or(`ident.eq.${depCode},ident.eq.${arrCode}`);
 
     if (specificError) {
@@ -204,11 +262,12 @@ export default async function handler(req, res) {
 
     if (!specificAirports || specificAirports.length < 2) {
       return res.status(400).json({
-        error: 'Unknown airport code',
+        error: 'Codice aeroporto sconosciuto',
         missing: {
           departure: depCode,
           arrival: arrCode,
-          specific_search_results: specificAirports?.length || 0
+          specific_search_results: specificAirports?.length || 0,
+          suggestion: "Prova a cercare un aeroporto più grande nella stessa area"
         }
       });
     }
@@ -217,6 +276,7 @@ export default async function handler(req, res) {
     specificAirports.forEach(a => {
       const code = a.ident.trim().toUpperCase();
       AIRPORTS[code] = {
+        name: a.name,
         lat: parseFloat(a.latitude),
         lon: parseFloat(a.longitude)
       };
@@ -226,7 +286,7 @@ export default async function handler(req, res) {
     const arr = AIRPORTS[arrCode];
 
     if (!dep || !arr) {
-      return res.status(400).json({ error: 'Airport data missing in mapping' });
+      return res.status(400).json({ error: 'Dati aeroporto mancanti nel mapping' });
     }
 
     // Fetch jets
@@ -279,7 +339,7 @@ export default async function handler(req, res) {
           flight_time_h: null,
           flight_time_pretty: null,
           price: null,
-          warning: 'Missing or invalid speed',
+          warning: 'Velocità mancante o non valida',
         };
       }
 
@@ -314,7 +374,9 @@ export default async function handler(req, res) {
         departure: departureInput,
         arrival: arrivalInput,
         departure_icao: departureICAO,
+        departure_name: dep.name,
         arrival_icao: arrivalICAO,
+        arrival_name: arr.name,
         date: validatedDate,
         time: validatedTime,
         pax: validatedPax
@@ -323,7 +385,7 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('Unexpected error:', error);
-    return res.status(500).json({ error: 'Internal server error', details: error.message });
+    console.error('Errore imprevisto:', error);
+    return res.status(500).json({ error: 'Errore interno del server', details: error.message });
   }
 }
