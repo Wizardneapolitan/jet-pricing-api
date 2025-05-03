@@ -76,7 +76,6 @@ async function getCityToICAO(cityName) {
     return null;
   }
 }
-
 export default async function handler(req, res) {
   try {
     console.log('Richiesta ricevuta:', req.body);
