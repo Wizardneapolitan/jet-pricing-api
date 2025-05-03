@@ -1,4 +1,3 @@
-// api/calculate.js
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -19,150 +18,65 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Funzione migliorata per convertire nomi di città/aeroporti in codici ICAO
-// COMPLETAMENTE DINAMICA - nessuna mappa statica
+function normalizeInput(str) {
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // rimuove accenti
+    .toLowerCase()
+    .trim();
+}
+
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
-  
-  // Normalizza il testo di input
-  const normalizedCity = cityName.toLowerCase().trim();
-  
-  // Se è già un codice ICAO, restituiscilo direttamente
-  if (/^[A-Z]{4}$/.test(cityName)) {
-    console.log(`Codice ICAO già fornito: ${cityName}`);
-    return cityName;
-  }
-  
+  if (/^[A-Z]{4}$/.test(cityName)) return cityName;
+
+  const normalizedCity = normalizeInput(cityName);
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
-  
+
   try {
-    // Strategia 1: Cerca aeroporti principali (large_airport) per la città specificata
-    let { data: majorAirports, error: majorError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, type, municipality')
-      .eq('type', 'large_airport')
-      .or(`municipality.ilike.${normalizedCity},name.ilike.%${normalizedCity}%`)
-      .limit(1);
-    
-    if (!majorError && majorAirports && majorAirports.length > 0) {
-      console.log(`Trovato aeroporto principale: ${majorAirports[0].ident} (${majorAirports[0].name})`);
-      return majorAirports[0].ident;
+    const { data, error } = await supabase
+      .from("Airport 2")
+      .select("ident, name, municipality, type")
+      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%`)
+      .order("type", { ascending: false }) // preferisce large_airport
+      .limit(3);
+
+    if (!error && data && data.length > 0) {
+      console.log(`Trovato: ${data[0].ident} (${data[0].name})`);
+      return data[0].ident;
     }
-    
-    // Strategia 2: Cerca aeroporti medi (medium_airport) per la città specificata
-    let { data: mediumAirports, error: mediumError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, type, municipality')
-      .eq('type', 'medium_airport')
-      .or(`municipality.ilike.${normalizedCity},name.ilike.%${normalizedCity}%`)
-      .limit(1);
-    
-    if (!mediumError && mediumAirports && mediumAirports.length > 0) {
-      console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
-      return mediumAirports[0].ident;
-    }
-    
-    // Strategia 3: Cerca qualsiasi tipo di aeroporto con corrispondenza esatta del nome
-    let { data: exactNameData, error: exactNameError } = await supabase
-      .from('Airport 2')
-      .select('ident, name')
-      .ilike('name', normalizedCity)
-      .limit(1);
-    
-    if (!exactNameError && exactNameData && exactNameData.length > 0) {
-      console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
-      return exactNameData[0].ident;
-    }
-    
-    // Strategia 4: Cerca qualsiasi tipo di aeroporto con corrispondenza esatta del comune
-    let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, municipality')
-      .ilike('municipality', normalizedCity)
-      .limit(1);
-    
-    if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
-      console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
-      return exactMunicipalityData[0].ident;
-    }
-    
-    // Strategia 5: Cerca qualsiasi tipo di aeroporto con corrispondenza parziale del nome
-    let { data: partialNameData, error: partialNameError } = await supabase
-      .from('Airport 2')
-      .select('ident, name')
-      .ilike('name', `%${normalizedCity}%`)
-      .limit(1);
-    
-    if (!partialNameError && partialNameData && partialNameData.length > 0) {
-      console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
-      return partialNameData[0].ident;
-    }
-    
-    // Strategia 6: Cerca qualsiasi tipo di aeroporto con corrispondenza parziale del comune
-    let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, municipality')
-      .ilike('municipality', `%${normalizedCity}%`)
-      .limit(1);
-    
-    if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
-      console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
-      return partialMunicipalityData[0].ident;
-    }
-    
-    // Strategia 7: Ricerca più ampia in tutti i campi rilevanti
-    let { data: anyFieldData, error: anyFieldError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, municipality')
-      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%,iso_region.ilike.%${normalizedCity}%`)
-      .order('type')
-      .limit(1);
-    
-    if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
-      console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
-      return anyFieldData[0].ident;
-    }
-    
-    // Se tutto fallisce, restituisci null
-    console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
+
+    // Logging input non risolto (opzionale)
+    await supabase.from("unresolved_requests").insert([
+      { input: cityName, normalized: normalizedCity, timestamp: new Date().toISOString() },
+    ]);
+
     return null;
-  } catch (error) {
-    console.error(`Errore nella ricerca dell'aeroporto per ${normalizedCity}:`, error);
+  } catch (err) {
+    console.error(`Errore nella ricerca dell'aeroporto per ${cityName}:`, err);
     return null;
   }
 }
 
 export default async function handler(req, res) {
   try {
-    console.log('Richiesta ricevuta:', req.body);
-    
-    // Estrai i dati dalla richiesta
     let { departure, arrival, from, to, pax, date, time } = req.body;
-    
-    // Supporto per entrambi i formati di input
     const departureInput = departure || from || '';
     const arrivalInput = arrival || to || '';
-    
+
     if (!departureInput || !arrivalInput) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Mancano dati di partenza o arrivo',
         required_format: {
           from: "Nome città o codice ICAO (es. 'Milano' o 'LIML')",
           to: "Nome città o codice ICAO (es. 'Nizza' o 'LFMN')",
-          date: "Data in formato YYYY-MM-DD (opzionale)",
-          time: "Orario in formato HH:MM (opzionale)",
-          pax: "Numero passeggeri (opzionale, default: 4)"
         }
       });
     }
-    
-    // Converti nomi delle città in codici ICAO
-    console.log(`Conversione città a ICAO: ${departureInput}, ${arrivalInput}`);
+
     const depCode = await getCityToICAO(departureInput);
     const arrCode = await getCityToICAO(arrivalInput);
-    
-    console.log(`Risultato conversione: ${departureInput} -> ${depCode}, ${arrivalInput} -> ${arrCode}`);
-    
+
     if (!depCode || !arrCode) {
       return res.status(400).json({
         error: 'Codice aeroporto sconosciuto',
@@ -175,19 +89,12 @@ export default async function handler(req, res) {
       });
     }
 
-    // Fetch departure and arrival airport info
     const { data: specificAirports, error: specificError } = await supabase
       .from('Airport 2')
       .select('id, ident, name, latitude, longitude')
       .or(`ident.eq.${depCode},ident.eq.${arrCode}`);
 
-    if (specificError) {
-      console.error('Errore nella ricerca degli aeroporti specifici:', specificError);
-      return res.status(500).json({ error: specificError.message });
-    }
-
-    if (!specificAirports || specificAirports.length < 2) {
-      console.error('Aeroporti non trovati:', { depCode, arrCode, results: specificAirports?.length || 0 });
+    if (specificError || !specificAirports || specificAirports.length < 2) {
       return res.status(400).json({
         error: 'Codice aeroporto sconosciuto',
         missing: {
@@ -200,8 +107,7 @@ export default async function handler(req, res) {
 
     const AIRPORTS = {};
     specificAirports.forEach(a => {
-      const code = a.ident.trim().toUpperCase();
-      AIRPORTS[code] = {
+      AIRPORTS[a.ident.trim().toUpperCase()] = {
         name: a.name,
         lat: parseFloat(a.latitude),
         lon: parseFloat(a.longitude)
@@ -215,13 +121,11 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Dati aeroporto mancanti nel mapping' });
     }
 
-    // Fetch jets
     const { data: jets, error: jetError } = await supabase.from('jet').select('*');
     if (jetError) return res.status(500).json({ error: jetError.message });
 
     const uniqueHomebases = [...new Set(jets.map(j => j.homebase?.trim().toUpperCase()).filter(Boolean))];
 
-    // Fetch home base airports
     const { data: baseAirports, error: baseError } = await supabase
       .from('Airport 2')
       .select('id, ident, latitude, longitude')
@@ -230,37 +134,21 @@ export default async function handler(req, res) {
     if (baseError) return res.status(500).json({ error: baseError.message });
 
     baseAirports.forEach(a => {
-      const code = a.ident.trim().toUpperCase();
-      AIRPORTS[code] = {
+      AIRPORTS[a.ident.trim().toUpperCase()] = {
         lat: parseFloat(a.latitude),
-        lon: parseFloat(a.longitude),
+        lon: parseFloat(a.longitude)
       };
     });
 
-    // Processa data e formatta in YYYY-MM-DD
     let formattedDate = date;
     if (date) {
       try {
-        const currentYear = 2025; // Anno corrente
-        let dateObj;
-        
-        if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
-          // Già in formato ISO
-          dateObj = new Date(date);
-        } else if (date.match(/\d{1,2}\s+\w+/)) {
-          // Formato "15 luglio", aggiungi anno corrente
-          const withYear = `${date} ${currentYear}`;
-          dateObj = new Date(withYear);
-        } else {
-          dateObj = new Date(date);
-        }
-        
+        const currentYear = 2025;
+        let dateObj = /^\d{4}-\d{2}-\d{2}$/.test(date)
+          ? new Date(date)
+          : new Date(`${date} ${currentYear}`);
         if (!isNaN(dateObj.getTime())) {
-          // Assicurati che l'anno sia corrente se non è specificato
-          if (dateObj.getFullYear() < currentYear) {
-            dateObj.setFullYear(currentYear);
-          }
-          
+          if (dateObj.getFullYear() < currentYear) dateObj.setFullYear(currentYear);
           formattedDate = dateObj.toISOString().split('T')[0];
         }
       } catch (error) {
@@ -268,7 +156,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Filter jets with homebase within 500km
     const jetsNearby = jets.filter((jet) => {
       const home = jet.homebase?.trim().toUpperCase();
       const base = AIRPORTS[home];
@@ -281,7 +168,6 @@ export default async function handler(req, res) {
 
     const results = jetsNearby.map((jet) => {
       const knots = jet.speed_knots || jet.speed || null;
-
       if (!knots || knots === 0) {
         return {
           jet_id: jet.id,
@@ -325,7 +211,6 @@ export default async function handler(req, res) {
 
     results.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
 
-    // Includi informazioni sugli aeroporti nella risposta
     return res.status(200).json({
       input: {
         departure: departureInput,
@@ -343,8 +228,8 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('Errore imprevisto:', error);
-    return res.status(500).json({ 
-      error: 'Errore interno del server', 
+    return res.status(500).json({
+      error: 'Errore interno del server',
       details: error.message,
       stack: error.stack
     });
