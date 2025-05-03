@@ -20,7 +20,6 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
 }
 
 // Funzione ottimizzata per convertire nomi di città/aeroporti in codici ICAO
-// 100% dinamica - Nessuna mappa statica
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
   
@@ -36,63 +35,69 @@ async function getCityToICAO(cityName) {
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
   
   try {
-    // Approccio unificato: cerca in tutti i campi rilevanti, ma ordina per tipo di aeroporto
-    // in modo che gli aeroporti principali abbiano priorità
-    let { data: airportData, error: airportError } = await supabase
+    // Strategia 1: Cerca aeroporti principali per nome o comune esatto
+    let { data: largeExactAirports, error: largeExactError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
-      .or(`municipality.ilike.%${normalizedCity}%,name.ilike.%${normalizedCity}%`)
-      .order('type')  // I tipi sono alfabetici: large_airport viene prima di medium_airport e small_airport
-      .limit(10);
+      .eq('type', 'large_airport')
+      .or(`municipality.eq.${normalizedCity},name.eq.${normalizedCity}`)
+      .limit(1);
     
-    if (airportError) {
-      console.error(`Errore nella ricerca dell'aeroporto per ${normalizedCity}:`, airportError);
-      return null;
+    if (!largeExactError && largeExactAirports && largeExactAirports.length > 0) {
+      console.log(`Trovato aeroporto principale esatto: ${largeExactAirports[0].ident}`);
+      return largeExactAirports[0].ident;
     }
     
-    if (airportData && airportData.length > 0) {
-      console.log(`Trovati ${airportData.length} aeroporti per ${normalizedCity}`);
-      
-      // Prima cerca aeroporti principali
-      const largeAirports = airportData.filter(a => a.type === 'large_airport');
-      if (largeAirports.length > 0) {
-        console.log(`Trovato aeroporto principale: ${largeAirports[0].ident} (${largeAirports[0].name})`);
-        return largeAirports[0].ident;
-      }
-      
-      // Poi aeroporti medi
-      const mediumAirports = airportData.filter(a => a.type === 'medium_airport');
-      if (mediumAirports.length > 0) {
-        console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
-        return mediumAirports[0].ident;
-      }
-      
-      // Infine qualsiasi altro aeroporto trovato
-      console.log(`Nessun aeroporto principale o medio, uso: ${airportData[0].ident} (${airportData[0].name})`);
-      return airportData[0].ident;
-    }
-    
-    // Se non troviamo nulla con la prima ricerca, proviamo con una ricerca più ampia
-    let { data: broadSearchData, error: broadSearchError } = await supabase
+    // Strategia 2: Cerca aeroporti principali con corrispondenza parziale
+    let { data: largeAirports, error: largeError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
-      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,iso_region.ilike.%${normalizedCity}%`)
-      .order('type')
+      .eq('type', 'large_airport')
+      .filter('municipality', 'ilike', `%${normalizedCity}%`)
+      .limit(1);
+    
+    if (!largeError && largeAirports && largeAirports.length > 0) {
+      console.log(`Trovato aeroporto principale: ${largeAirports[0].ident}`);
+      return largeAirports[0].ident;
+    }
+    
+    // Strategia 3: Cerca in nomi di aeroporti principali
+    let { data: largeNameAirports, error: largeNameError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, type, municipality')
+      .eq('type', 'large_airport')
+      .filter('name', 'ilike', `%${normalizedCity}%`)
+      .limit(1);
+    
+    if (!largeNameError && largeNameAirports && largeNameAirports.length > 0) {
+      console.log(`Trovato aeroporto principale nel nome: ${largeNameAirports[0].ident}`);
+      return largeNameAirports[0].ident;
+    }
+    
+    // Strategia 4: Cerca aeroporti medi
+    let { data: mediumAirports, error: mediumError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, type, municipality')
+      .eq('type', 'medium_airport')
+      .or('municipality.ilike.%' + normalizedCity + '%,name.ilike.%' + normalizedCity + '%')
+      .limit(1);
+    
+    if (!mediumError && mediumAirports && mediumAirports.length > 0) {
+      console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident}`);
+      return mediumAirports[0].ident;
+    }
+    
+    // Strategia 5: Ricerca generale con priorità al tipo di aeroporto
+    let { data: generalSearch, error: generalError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, type, municipality')
+      .or('municipality.ilike.%' + normalizedCity + '%,name.ilike.%' + normalizedCity + '%')
+      .order('type')  // Ordinamento per tipo, large_airport prima
       .limit(5);
     
-    if (!broadSearchError && broadSearchData && broadSearchData.length > 0) {
-      // Anche qui, priorità agli aeroporti principali e medi
-      const betterAirports = broadSearchData.filter(a => 
-        a.type === 'large_airport' || a.type === 'medium_airport'
-      );
-      
-      if (betterAirports.length > 0) {
-        console.log(`Trovato aeroporto nella ricerca ampia: ${betterAirports[0].ident} (${betterAirports[0].name})`);
-        return betterAirports[0].ident;
-      }
-      
-      console.log(`Trovato aeroporto nella ricerca ampia: ${broadSearchData[0].ident} (${broadSearchData[0].name})`);
-      return broadSearchData[0].ident;
+    if (!generalError && generalSearch && generalSearch.length > 0) {
+      console.log(`Trovato in ricerca generale: ${generalSearch[0].ident}`);
+      return generalSearch[0].ident;
     }
     
     // Nessun risultato trovato
