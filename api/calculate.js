@@ -19,8 +19,8 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Funzione completamente ottimizzata per convertire nomi di città/aeroporti in codici ICAO
-// 100% dinamica - senza mappatura statica
+// Funzione migliorata per convertire nomi di città/aeroporti in codici ICAO
+// COMPLETAMENTE DINAMICA - nessuna mappa statica
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
   
@@ -36,134 +36,94 @@ async function getCityToICAO(cityName) {
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
   
   try {
-    // ---------- METODO 1: Cerca aeroporti principali per municipalità ----------
-    let { data: largeAirports, error: largeError } = await supabase
+    // Strategia 1: Cerca aeroporti principali (large_airport) per la città specificata
+    let { data: majorAirports, error: majorError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
       .eq('type', 'large_airport')
-      .ilike('municipality', normalizedCity)
+      .or(`municipality.ilike.${normalizedCity},name.ilike.%${normalizedCity}%`)
       .limit(1);
     
-    if (!largeError && largeAirports && largeAirports.length > 0) {
-      console.log(`Trovato aeroporto principale per municipalità esatta: ${largeAirports[0].ident}`);
-      return largeAirports[0].ident;
+    if (!majorError && majorAirports && majorAirports.length > 0) {
+      console.log(`Trovato aeroporto principale: ${majorAirports[0].ident} (${majorAirports[0].name})`);
+      return majorAirports[0].ident;
     }
     
-    // ---------- METODO 2: Cerca aeroporti principali per municipalità parziale ----------
-    let { data: largePartialAirports, error: largePartialError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, type, municipality')
-      .eq('type', 'large_airport')
-      .ilike('municipality', `%${normalizedCity}%`)
-      .limit(1);
-    
-    if (!largePartialError && largePartialAirports && largePartialAirports.length > 0) {
-      console.log(`Trovato aeroporto principale per municipalità parziale: ${largePartialAirports[0].ident}`);
-      return largePartialAirports[0].ident;
-    }
-    
-    // ---------- METODO 3: Cerca nel nome dell'aeroporto principale ----------
-    let { data: largeNameAirports, error: largeNameError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, type, municipality')
-      .eq('type', 'large_airport')
-      .ilike('name', `%${normalizedCity}%`)
-      .limit(1);
-    
-    if (!largeNameError && largeNameAirports && largeNameAirports.length > 0) {
-      console.log(`Trovato aeroporto principale per nome: ${largeNameAirports[0].ident}`);
-      return largeNameAirports[0].ident;
-    }
-    
-    // ---------- METODO 4: Cerca aeroporti medi per municipalità ----------
+    // Strategia 2: Cerca aeroporti medi (medium_airport) per la città specificata
     let { data: mediumAirports, error: mediumError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
       .eq('type', 'medium_airport')
-      .ilike('municipality', normalizedCity)
+      .or(`municipality.ilike.${normalizedCity},name.ilike.%${normalizedCity}%`)
       .limit(1);
     
     if (!mediumError && mediumAirports && mediumAirports.length > 0) {
-      console.log(`Trovato aeroporto medio per municipalità esatta: ${mediumAirports[0].ident}`);
+      console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
       return mediumAirports[0].ident;
     }
     
-    // ---------- METODO 5: Cerca aeroporti medi per municipalità parziale ----------
-    let { data: mediumPartialAirports, error: mediumPartialError } = await supabase
+    // Strategia 3: Cerca qualsiasi tipo di aeroporto con corrispondenza esatta del nome
+    let { data: exactNameData, error: exactNameError } = await supabase
       .from('Airport 2')
-      .select('ident, name, type, municipality')
-      .eq('type', 'medium_airport')
-      .ilike('municipality', `%${normalizedCity}%`)
+      .select('ident, name')
+      .ilike('name', normalizedCity)
       .limit(1);
     
-    if (!mediumPartialError && mediumPartialAirports && mediumPartialAirports.length > 0) {
-      console.log(`Trovato aeroporto medio per municipalità parziale: ${mediumPartialAirports[0].ident}`);
-      return mediumPartialAirports[0].ident;
+    if (!exactNameError && exactNameData && exactNameData.length > 0) {
+      console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
+      return exactNameData[0].ident;
     }
     
-    // ---------- METODO 6: Cerca nel nome dell'aeroporto medio ----------
-    let { data: mediumNameAirports, error: mediumNameError } = await supabase
+    // Strategia 4: Cerca qualsiasi tipo di aeroporto con corrispondenza esatta del comune
+    let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
       .from('Airport 2')
-      .select('ident, name, type, municipality')
-      .eq('type', 'medium_airport')
+      .select('ident, name, municipality')
+      .ilike('municipality', normalizedCity)
+      .limit(1);
+    
+    if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
+      console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
+      return exactMunicipalityData[0].ident;
+    }
+    
+    // Strategia 5: Cerca qualsiasi tipo di aeroporto con corrispondenza parziale del nome
+    let { data: partialNameData, error: partialNameError } = await supabase
+      .from('Airport 2')
+      .select('ident, name')
       .ilike('name', `%${normalizedCity}%`)
       .limit(1);
     
-    if (!mediumNameError && mediumNameAirports && mediumNameAirports.length > 0) {
-      console.log(`Trovato aeroporto medio per nome: ${mediumNameAirports[0].ident}`);
-      return mediumNameAirports[0].ident;
+    if (!partialNameError && partialNameData && partialNameData.length > 0) {
+      console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
+      return partialNameData[0].ident;
     }
     
-    // ---------- METODO 7: Qualsiasi aeroporto per municipalità parziale ----------
-    let { data: anyAirport, error: anyError } = await supabase
+    // Strategia 6: Cerca qualsiasi tipo di aeroporto con corrispondenza parziale del comune
+    let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
       .from('Airport 2')
-      .select('ident, name, type, municipality')
+      .select('ident, name, municipality')
       .ilike('municipality', `%${normalizedCity}%`)
-      .order('type')
       .limit(1);
     
-    if (!anyError && anyAirport && anyAirport.length > 0) {
-      console.log(`Trovato qualsiasi aeroporto per municipalità: ${anyAirport[0].ident}`);
-      return anyAirport[0].ident;
+    if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
+      console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
+      return partialMunicipalityData[0].ident;
     }
     
-    // ---------- METODO 8: Qualsiasi aeroporto per nome parziale ----------
-    let { data: anyNameAirport, error: anyNameError } = await supabase
+    // Strategia 7: Ricerca più ampia in tutti i campi rilevanti
+    let { data: anyFieldData, error: anyFieldError } = await supabase
       .from('Airport 2')
-      .select('ident, name, type, municipality')
-      .ilike('name', `%${normalizedCity}%`)
+      .select('ident, name, municipality')
+      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%,iso_region.ilike.%${normalizedCity}%`)
       .order('type')
       .limit(1);
     
-    if (!anyNameError && anyNameAirport && anyNameAirport.length > 0) {
-      console.log(`Trovato qualsiasi aeroporto per nome: ${anyNameAirport[0].ident}`);
-      return anyNameAirport[0].ident;
+    if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
+      console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
+      return anyFieldData[0].ident;
     }
     
-    // ---------- METODO 9: Ricerca fuzzy per corrispodenza approssimativa ----------
-    const normalizedCityParts = normalizedCity.split(' ');
-    const mainCity = normalizedCityParts[0]; // Prendi solo la prima parola
-    
-    let { data: fuzzySearch, error: fuzzyError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, type, municipality')
-      .or(`municipality.ilike.%${mainCity}%,name.ilike.%${mainCity}%`)
-      .order('type')
-      .limit(1);
-    
-    if (!fuzzyError && fuzzySearch && fuzzySearch.length > 0) {
-      console.log(`Trovato tramite ricerca fuzzy: ${fuzzySearch[0].ident}`);
-      return fuzzySearch[0].ident;
-    }
-    
-    // ---------- CASO SPECIALE PER MALAGA ----------
-    // Questo serve solo per risolvere il problema specifico con Malaga
-    if (normalizedCity === 'malaga') {
-      console.log(`Caso speciale per Malaga: LEMG`);
-      return 'LEMG'; // Aeroporto di Malaga-Costa del Sol
-    }
-    
-    // Nessun risultato trovato
+    // Se tutto fallisce, restituisci null
     console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
     return null;
   } catch (error) {
@@ -219,7 +179,7 @@ export default async function handler(req, res) {
     const { data: specificAirports, error: specificError } = await supabase
       .from('Airport 2')
       .select('id, ident, name, latitude, longitude')
-      .in('ident', [depCode, arrCode]);
+      .or(`ident.eq.${depCode},ident.eq.${arrCode}`);
 
     if (specificError) {
       console.error('Errore nella ricerca degli aeroporti specifici:', specificError);
