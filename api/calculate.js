@@ -18,16 +18,14 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Nuova funzione di normalizzazione
 function normalizeInput(str) {
   return str
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // Rimuove accenti
+    .replace(/[\u0300-\u036f]/g, "") // rimuove accenti
     .toLowerCase()
     .trim();
 }
 
-// Funzione aggiornata con normalizeInput e .ilike.%...%
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
 
@@ -40,7 +38,6 @@ async function getCityToICAO(cityName) {
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
 
   try {
-    // Strategia 1: large_airport
     let { data: majorAirports, error: majorError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -53,7 +50,6 @@ async function getCityToICAO(cityName) {
       return majorAirports[0].ident;
     }
 
-    // Strategia 2: medium_airport
     let { data: mediumAirports, error: mediumError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -66,11 +62,9 @@ async function getCityToICAO(cityName) {
       return mediumAirports[0].ident;
     }
 
-    // Strategia 3–7 rimangono invariate (se presenti)
-    // ...
-
     console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
     return null;
+
   } catch (error) {
     console.error(`Errore nella ricerca dell'aeroporto per ${normalizedCity}:`, error);
     return null;
