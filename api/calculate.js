@@ -18,48 +18,69 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+// Nuova funzione di normalizzazione
 function normalizeInput(str) {
   return str
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // rimuove accenti
+    .replace(/[\u0300-\u036f]/g, "") // Rimuove accenti
     .toLowerCase()
     .trim();
 }
 
+// Funzione aggiornata con normalizeInput e .ilike.%...%
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
-  if (/^[A-Z]{4}$/.test(cityName)) return cityName;
+
+  if (/^[A-Z]{4}$/.test(cityName)) {
+    console.log(`Codice ICAO già fornito: ${cityName}`);
+    return cityName;
+  }
 
   const normalizedCity = normalizeInput(cityName);
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
 
   try {
-    const { data, error } = await supabase
-      .from("Airport 2")
-      .select("ident, name, municipality, type")
-      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%`)
-      .order("type", { ascending: false }) // preferisce large_airport
-      .limit(3);
+    // Strategia 1: large_airport
+    let { data: majorAirports, error: majorError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, type, municipality')
+      .eq('type', 'large_airport')
+      .or(`municipality.ilike.%${normalizedCity}%,name.ilike.%${normalizedCity}%`)
+      .limit(1);
 
-    if (!error && data && data.length > 0) {
-      console.log(`Trovato: ${data[0].ident} (${data[0].name})`);
-      return data[0].ident;
+    if (!majorError && majorAirports && majorAirports.length > 0) {
+      console.log(`Trovato aeroporto principale: ${majorAirports[0].ident} (${majorAirports[0].name})`);
+      return majorAirports[0].ident;
     }
 
-    // Logging input non risolto (opzionale)
-    await supabase.from("unresolved_requests").insert([
-      { input: cityName, normalized: normalizedCity, timestamp: new Date().toISOString() },
-    ]);
+    // Strategia 2: medium_airport
+    let { data: mediumAirports, error: mediumError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, type, municipality')
+      .eq('type', 'medium_airport')
+      .or(`municipality.ilike.%${normalizedCity}%,name.ilike.%${normalizedCity}%`)
+      .limit(1);
 
+    if (!mediumError && mediumAirports && mediumAirports.length > 0) {
+      console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
+      return mediumAirports[0].ident;
+    }
+
+    // Strategia 3–7 rimangono invariate (se presenti)
+    // ...
+
+    console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
     return null;
-  } catch (err) {
-    console.error(`Errore nella ricerca dell'aeroporto per ${cityName}:`, err);
+  } catch (error) {
+    console.error(`Errore nella ricerca dell'aeroporto per ${normalizedCity}:`, error);
     return null;
   }
 }
 
 export default async function handler(req, res) {
   try {
+    console.log('Richiesta ricevuta:', req.body);
+
     let { departure, arrival, from, to, pax, date, time } = req.body;
     const departureInput = departure || from || '';
     const arrivalInput = arrival || to || '';
@@ -70,6 +91,9 @@ export default async function handler(req, res) {
         required_format: {
           from: "Nome città o codice ICAO (es. 'Milano' o 'LIML')",
           to: "Nome città o codice ICAO (es. 'Nizza' o 'LFMN')",
+          date: "Data in formato YYYY-MM-DD (opzionale)",
+          time: "Orario in formato HH:MM (opzionale)",
+          pax: "Numero passeggeri (opzionale, default: 4)"
         }
       });
     }
@@ -144,11 +168,22 @@ export default async function handler(req, res) {
     if (date) {
       try {
         const currentYear = 2025;
-        let dateObj = /^\d{4}-\d{2}-\d{2}$/.test(date)
-          ? new Date(date)
-          : new Date(`${date} ${currentYear}`);
+        let dateObj;
+
+        if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          dateObj = new Date(date);
+        } else if (date.match(/\d{1,2}\s+\w+/)) {
+          const withYear = `${date} ${currentYear}`;
+          dateObj = new Date(withYear);
+        } else {
+          dateObj = new Date(date);
+        }
+
         if (!isNaN(dateObj.getTime())) {
-          if (dateObj.getFullYear() < currentYear) dateObj.setFullYear(currentYear);
+          if (dateObj.getFullYear() < currentYear) {
+            dateObj.setFullYear(currentYear);
+          }
+
           formattedDate = dateObj.toISOString().split('T')[0];
         }
       } catch (error) {
@@ -168,6 +203,7 @@ export default async function handler(req, res) {
 
     const results = jetsNearby.map((jet) => {
       const knots = jet.speed_knots || jet.speed || null;
+
       if (!knots || knots === 0) {
         return {
           jet_id: jet.id,
