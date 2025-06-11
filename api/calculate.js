@@ -5,6 +5,10 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
+// Cache in memoria per aeroporti frequenti
+const airportCache = new Map();
+const CACHE_EXPIRY = 1000 * 60 * 60; // 1 ora
+
 function getDistanceKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -31,16 +35,26 @@ async function getCityToICAO(cityName) {
   if (!cityName) return null;
 
   const normalizedCity = normalizeInput(cityName);
+  
+  // Controlla cache
+  const cached = airportCache.get(normalizedCity);
+  if (cached && (Date.now() - cached.timestamp) < CACHE_EXPIRY) {
+    console.log(`Cache hit per: ${normalizedCity}`);
+    return cached.data;
+  }
 
   // Se è già un codice ICAO, restituiscilo direttamente
   if (/^[A-Z]{4}$/.test(cityName)) {
     console.log(`Codice ICAO già fornito: ${cityName}`);
-    return cityName;
+    const result = cityName;
+    airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+    return result;
   }
 
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
 
   try {
+    // Cerca prima aeroporti principali
     let { data: majorAirports, error: majorError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -50,9 +64,12 @@ async function getCityToICAO(cityName) {
 
     if (!majorError && majorAirports && majorAirports.length > 0) {
       console.log(`Trovato aeroporto principale: ${majorAirports[0].ident} (${majorAirports[0].name})`);
-      return majorAirports[0].ident;
+      const result = majorAirports[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca aeroporti medi
     let { data: mediumAirports, error: mediumError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -62,20 +79,26 @@ async function getCityToICAO(cityName) {
 
     if (!mediumError && mediumAirports && mediumAirports.length > 0) {
       console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
-      return mediumAirports[0].ident;
+      const result = mediumAirports[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca per nome esatto (migliora la query)
     let { data: exactNameData, error: exactNameError } = await supabase
       .from('Airport 2')
       .select('ident, name')
-      .ilike('name', normalizedCity)
+      .or(`name.ilike.${normalizedCity},name.ilike.%${normalizedCity} airport%,name.ilike.%${normalizedCity} international%`)
       .limit(1);
 
     if (!exactNameError && exactNameData && exactNameData.length > 0) {
       console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
-      return exactNameData[0].ident;
+      const result = exactNameData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca per comune esatto
     let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -84,9 +107,30 @@ async function getCityToICAO(cityName) {
 
     if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
       console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
-      return exactMunicipalityData[0].ident;
+      const result = exactMunicipalityData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca con varianti comuni delle città
+    const cityVariants = getCityVariants(normalizedCity);
+    for (const variant of cityVariants) {
+      let { data: variantData, error: variantError } = await supabase
+        .from('Airport 2')
+        .select('ident, name, municipality')
+        .or(`municipality.ilike.%${variant}%,name.ilike.%${variant}%`)
+        .eq('type', 'large_airport')
+        .limit(1);
+
+      if (!variantError && variantData && variantData.length > 0) {
+        console.log(`Trovato con variante ${variant}: ${variantData[0].ident} (${variantData[0].name})`);
+        const result = variantData[0].ident;
+        airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+        return result;
+      }
+    }
+
+    // Cerca per nome parziale
     let { data: partialNameData, error: partialNameError } = await supabase
       .from('Airport 2')
       .select('ident, name')
@@ -95,9 +139,12 @@ async function getCityToICAO(cityName) {
 
     if (!partialNameError && partialNameData && partialNameData.length > 0) {
       console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
-      return partialNameData[0].ident;
+      const result = partialNameData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca per comune parziale
     let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -106,9 +153,12 @@ async function getCityToICAO(cityName) {
 
     if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
       console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
-      return partialMunicipalityData[0].ident;
+      const result = partialMunicipalityData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca in qualsiasi campo (ultima opzione)
     let { data: anyFieldData, error: anyFieldError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -118,7 +168,9 @@ async function getCityToICAO(cityName) {
 
     if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
       console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
-      return anyFieldData[0].ident;
+      const result = anyFieldData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
     console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
@@ -129,11 +181,60 @@ async function getCityToICAO(cityName) {
     return null;
   }
 }
+
+// Funzione per gestire varianti comuni delle città
+function getCityVariants(cityName) {
+  const variants = [];
+  
+  // Varianti comuni
+  const cityMappings = {
+    'milano': ['milan', 'mailand'],
+    'milan': ['milano', 'mailand'],
+    'roma': ['rome'],
+    'rome': ['roma'],
+    'torino': ['turin'],
+    'turin': ['torino'],
+    'firenze': ['florence'],
+    'florence': ['firenze'],
+    'venezia': ['venice'],
+    'venice': ['venezia'],
+    'napoli': ['naples'],
+    'naples': ['napoli'],
+    'parigi': ['paris'],
+    'paris': ['parigi'],
+    'londra': ['london'],
+    'london': ['londra'],
+    'madrid': ['madrid'],
+    'barcellona': ['barcelona'],
+    'barcelona': ['barcellona'],
+    'berlino': ['berlin'],
+    'berlin': ['berlino'],
+    'monaco': ['munich', 'munchen'],
+    'munich': ['monaco', 'munchen'],
+    'vienna': ['wien'],
+    'wien': ['vienna']
+  };
+  
+  if (cityMappings[cityName]) {
+    variants.push(...cityMappings[cityName]);
+  }
+  
+  return variants;
+}
+
+// Calcola costo repositioning per voli A/R
+function calculateRepositioningCost(jet, daysBetween) {
+  const parkingCostPerDay = jet.parking_cost_per_day || 500; // Default €500/giorno
+  const repositioningHours = 1; // Tempo stimato per riposizionamento
+  
+  return (parkingCostPerDay * daysBetween) + (jet.hourly_rate * repositioningHours * 0.5); // 50% del costo orario per riposizionamento
+}
+
 export default async function handler(req, res) {
   try {
     console.log('Richiesta ricevuta:', req.body);
 
-    let { departure, arrival, from, to, pax, date, time } = req.body;
+    let { departure, arrival, from, to, pax, date, time, returnDate, tripType = 'oneway' } = req.body;
 
     const departureInput = departure || from || '';
     const arrivalInput = arrival || to || '';
@@ -145,9 +246,19 @@ export default async function handler(req, res) {
           from: "Nome città o codice ICAO (es. 'Milano' o 'LIML')",
           to: "Nome città o codice ICAO (es. 'Nizza' o 'LFMN')",
           date: "Data in formato YYYY-MM-DD (opzionale)",
+          returnDate: "Data di ritorno in formato YYYY-MM-DD (per A/R)",
+          tripType: "'oneway' o 'roundtrip'",
           time: "Orario in formato HH:MM (opzionale)",
           pax: "Numero passeggeri (opzionale, default: 4)"
         }
+      });
+    }
+
+    // Validazione per roundtrip
+    if (tripType === 'roundtrip' && !returnDate) {
+      return res.status(400).json({
+        error: 'Data di ritorno richiesta per voli A/R',
+        tripType: tripType
       });
     }
 
@@ -225,7 +336,11 @@ export default async function handler(req, res) {
       };
     });
 
+    // Formattazione date
     let formattedDate = date;
+    let formattedReturnDate = returnDate;
+    let daysBetween = 0;
+
     if (date) {
       try {
         const currentYear = 2025;
@@ -244,11 +359,26 @@ export default async function handler(req, res) {
           if (dateObj.getFullYear() < currentYear) {
             dateObj.setFullYear(currentYear);
           }
-
           formattedDate = dateObj.toISOString().split('T')[0];
         }
       } catch (error) {
         console.error('Errore nella formattazione della data:', error);
+      }
+    }
+
+    if (returnDate && tripType === 'roundtrip') {
+      try {
+        const returnDateObj = new Date(returnDate);
+        if (!isNaN(returnDateObj.getTime())) {
+          formattedReturnDate = returnDateObj.toISOString().split('T')[0];
+          
+          // Calcola giorni tra andata e ritorno
+          const depDate = new Date(formattedDate);
+          const retDate = new Date(formattedReturnDate);
+          daysBetween = Math.ceil((retDate - depDate) / (1000 * 60 * 60 * 24));
+        }
+      } catch (error) {
+        console.error('Errore nella formattazione della data di ritorno:', error);
       }
     }
 
@@ -278,14 +408,31 @@ export default async function handler(req, res) {
           distance_km: Math.round(distance),
           flight_time_h: null,
           flight_time_pretty: null,
-          price: null,
+          trip_type: tripType,
+          outbound_price: null,
+          return_price: null,
+          total_price: null,
           warning: 'Velocità mancante o non valida',
         };
       }
 
       const speed_kmh = knots * 1.852;
       const flightTime = distance / speed_kmh;
-      const totalCost = jet.hourly_rate * flightTime * 2;
+      
+      let outboundCost, returnCost = 0, repositioningCost = 0, totalCost;
+      
+      if (tripType === 'roundtrip') {
+        // A/R: ogni tratta costa x2, quindi totale x4
+        outboundCost = jet.hourly_rate * flightTime * 2; // Andata con ritorno alla base
+        returnCost = jet.hourly_rate * flightTime * 2;   // Ritorno con ritorno alla base
+        repositioningCost = calculateRepositioningCost(jet, daysBetween);
+        totalCost = outboundCost + returnCost + repositioningCost;
+      } else {
+        // Solo andata: x2 perché il jet deve tornare alla base
+        outboundCost = jet.hourly_rate * flightTime * 2;
+        totalCost = outboundCost;
+      }
+      
       const hours = Math.floor(flightTime);
       const minutes = Math.round((flightTime - hours) * 60);
       const formatted = `${hours > 0 ? hours + 'h ' : ''}${minutes}min`;
@@ -302,11 +449,16 @@ export default async function handler(req, res) {
         distance_km: Math.round(distance),
         flight_time_h: flightTime.toFixed(2),
         flight_time_pretty: formatted,
-        price: Math.round(totalCost),
+        trip_type: tripType,
+        outbound_price: Math.round(outboundCost),
+        return_price: tripType === 'roundtrip' ? Math.round(returnCost) : null,
+        repositioning_cost: tripType === 'roundtrip' ? Math.round(repositioningCost) : null,
+        total_price: Math.round(totalCost),
+        days_between: tripType === 'roundtrip' ? daysBetween : null,
       };
     });
 
-    results.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+    results.sort((a, b) => (a.total_price ?? Infinity) - (b.total_price ?? Infinity));
 
     return res.status(200).json({
       input: {
@@ -317,6 +469,8 @@ export default async function handler(req, res) {
         arrival_icao: arrCode,
         arrival_name: arr.name,
         date: formattedDate || null,
+        return_date: formattedReturnDate || null,
+        trip_type: tripType,
         time: time || null,
         pax: pax || 4
       },
