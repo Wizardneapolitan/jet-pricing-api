@@ -54,7 +54,23 @@ async function getCityToICAO(cityName) {
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
 
   try {
-    // Cerca prima aeroporti principali
+    // 1. Cerca aeroporti principali con match esatto municipality
+    let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, municipality, type')
+      .ilike('municipality', normalizedCity)
+      .in('type', ['large_airport', 'medium_airport'])
+      .order('type')
+      .limit(1);
+
+    if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
+      console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
+      const result = exactMunicipalityData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
+    }
+
+    // 2. Cerca aeroporti principali con municipality che contiene la città
     let { data: majorAirports, error: majorError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -69,7 +85,7 @@ async function getCityToICAO(cityName) {
       return result;
     }
 
-    // Cerca aeroporti medi
+    // 3. Cerca aeroporti medi
     let { data: mediumAirports, error: mediumError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -84,90 +100,51 @@ async function getCityToICAO(cityName) {
       return result;
     }
 
-    // Cerca per nome esatto (migliora la query)
+    // 4. Cerca per nome esatto dell'aeroporto (senza accenti)
     let { data: exactNameData, error: exactNameError } = await supabase
       .from('Airport 2')
-      .select('ident, name')
-      .or(`name.ilike.${normalizedCity},name.ilike.%${normalizedCity} airport%,name.ilike.%${normalizedCity} international%`)
+      .select('ident, name, municipality, type')
+      .ilike('name', `%${normalizedCity}%`)
+      .in('type', ['large_airport', 'medium_airport'])
+      .order('type')
       .limit(1);
 
     if (!exactNameError && exactNameData && exactNameData.length > 0) {
-      console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
+      console.log(`Trovato per nome: ${exactNameData[0].ident} (${exactNameData[0].name})`);
       const result = exactNameData[0].ident;
       airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
       return result;
     }
 
-    // Cerca per comune esatto
-    let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, municipality')
-      .ilike('municipality', normalizedCity)
-      .limit(1);
-
-    if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
-      console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
-      const result = exactMunicipalityData[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
-    }
-
-    // Cerca con varianti comuni delle città
-    const cityVariants = getCityVariants(normalizedCity);
-    for (const variant of cityVariants) {
-      let { data: variantData, error: variantError } = await supabase
+    // 5. Cerca con versione originale (con accenti) se normalizzata non ha funzionato
+    if (cityName !== normalizedCity) {
+      let { data: originalNameData, error: originalNameError } = await supabase
         .from('Airport 2')
-        .select('ident, name, municipality')
-        .or(`municipality.ilike.%${variant}%,name.ilike.%${variant}%`)
-        .eq('type', 'large_airport')
+        .select('ident, name, municipality, type')
+        .or(`municipality.ilike.%${cityName}%,name.ilike.%${cityName}%`)
+        .in('type', ['large_airport', 'medium_airport'])
+        .order('type')
         .limit(1);
 
-      if (!variantError && variantData && variantData.length > 0) {
-        console.log(`Trovato con variante ${variant}: ${variantData[0].ident} (${variantData[0].name})`);
-        const result = variantData[0].ident;
+      if (!originalNameError && originalNameData && originalNameData.length > 0) {
+        console.log(`Trovato con nome originale: ${originalNameData[0].ident} (${originalNameData[0].name})`);
+        const result = originalNameData[0].ident;
         airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
         return result;
       }
     }
 
-    // Cerca per nome parziale
-    let { data: partialNameData, error: partialNameError } = await supabase
-      .from('Airport 2')
-      .select('ident, name')
-      .ilike('name', `%${normalizedCity}%`)
-      .limit(1);
-
-    if (!partialNameError && partialNameData && partialNameData.length > 0) {
-      console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
-      const result = partialNameData[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
-    }
-
-    // Cerca per comune parziale
-    let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, municipality')
-      .ilike('municipality', `%${normalizedCity}%`)
-      .limit(1);
-
-    if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
-      console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
-      const result = partialMunicipalityData[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
-    }
-
-    // Cerca in qualsiasi campo (ultima opzione)
+    // 6. Ricerca estesa in tutti i tipi (fallback)
     let { data: anyFieldData, error: anyFieldError } = await supabase
       .from('Airport 2')
-      .select('ident, name, municipality')
-      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%,iso_region.ilike.%${normalizedCity}%`)
+      .select('ident, name, municipality, type')
+      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%`)
+      .in('type', ['large_airport', 'medium_airport', 'small_airport'])
       .order('type')
       .limit(1);
 
     if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
-      console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
+      console.log(`Trovato in ricerca estesa: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
       const result = anyFieldData[0].ident;
       airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
       return result;
@@ -180,46 +157,6 @@ async function getCityToICAO(cityName) {
     console.error(`Errore nella ricerca dell'aeroporto per ${cityName}:`, error);
     return null;
   }
-}
-
-// Funzione per gestire varianti comuni delle città
-function getCityVariants(cityName) {
-  const variants = [];
-  
-  // Varianti comuni
-  const cityMappings = {
-    'milano': ['milan', 'mailand'],
-    'milan': ['milano', 'mailand'],
-    'roma': ['rome'],
-    'rome': ['roma'],
-    'torino': ['turin'],
-    'turin': ['torino'],
-    'firenze': ['florence'],
-    'florence': ['firenze'],
-    'venezia': ['venice'],
-    'venice': ['venezia'],
-    'napoli': ['naples'],
-    'naples': ['napoli'],
-    'parigi': ['paris'],
-    'paris': ['parigi'],
-    'londra': ['london'],
-    'london': ['londra'],
-    'madrid': ['madrid'],
-    'barcellona': ['barcelona'],
-    'barcelona': ['barcellona'],
-    'berlino': ['berlin'],
-    'berlin': ['berlino'],
-    'monaco': ['munich', 'munchen'],
-    'munich': ['monaco', 'munchen'],
-    'vienna': ['wien'],
-    'wien': ['vienna']
-  };
-  
-  if (cityMappings[cityName]) {
-    variants.push(...cityMappings[cityName]);
-  }
-  
-  return variants;
 }
 
 // Calcola costo repositioning per voli A/R
@@ -422,11 +359,20 @@ export default async function handler(req, res) {
       let outboundCost, returnCost = 0, repositioningCost = 0, totalCost;
       
       if (tripType === 'roundtrip') {
-        // A/R: ogni tratta costa x2, quindi totale x4
-        outboundCost = jet.hourly_rate * flightTime * 2; // Andata con ritorno alla base
-        returnCost = jet.hourly_rate * flightTime * 2;   // Ritorno con ritorno alla base
-        repositioningCost = calculateRepositioningCost(jet, daysBetween);
-        totalCost = outboundCost + returnCost + repositioningCost;
+        if (daysBetween <= 1) {
+          // Same-day o next-day: andata x2 + 20%
+          outboundCost = jet.hourly_rate * flightTime * 2;
+          const sameDayTotal = outboundCost * 1.20; // +20%
+          returnCost = sameDayTotal - outboundCost; // Il resto è considerato "return cost"
+          repositioningCost = 0; // Nessun costo parcheggio
+          totalCost = sameDayTotal;
+        } else {
+          // Multi-day: ogni tratta costa x2, quindi totale x4
+          outboundCost = jet.hourly_rate * flightTime * 2; // Andata con ritorno alla base
+          returnCost = jet.hourly_rate * flightTime * 2;   // Ritorno con ritorno alla base
+          repositioningCost = calculateRepositioningCost(jet, daysBetween);
+          totalCost = outboundCost + returnCost + repositioningCost;
+        }
       } else {
         // Solo andata: x2 perché il jet deve tornare alla base
         outboundCost = jet.hourly_rate * flightTime * 2;
@@ -447,8 +393,8 @@ export default async function handler(req, res) {
         image: jet.image_url || null,
         home_base: jet.homebase,
         distance_km: Math.round(distance),
-        flight_time_h: flightTime.toFixed(2),
-        flight_time_pretty: formatted,
+        flight_time_h: flightTime.toFixed(2), // Sempre il tempo della singola tratta
+        flight_time_pretty: formatted,        // Sempre il tempo della singola tratta
         trip_type: tripType,
         outbound_price: Math.round(outboundCost),
         return_price: tripType === 'roundtrip' ? Math.round(returnCost) : null,
