@@ -1,6 +1,4 @@
-try {
-    // 1. Cerca prima per città standardizzata (campo city)
-    let {import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -33,97 +31,50 @@ function normalizeInput(str) {
     .trim();
 }
 
-// Traduce nome città in inglese standard usando AI
-async function translateCityToEnglish(cityName) {
-  if (!cityName) return null;
-  
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: "gpt-3.5-turbo",
-        messages: [{
-          role: "system",
-          content: "Translate city names to standard English. Return only the English city name, lowercase, no accents. Examples: Milano->milan, Parigi->paris, Londra->london, München->munich, 北京->beijing"
-        }, {
-          role: "user", 
-          content: cityName
-        }],
-        max_tokens: 20,
-        temperature: 0
-      })
-    });
-    
-    const data = await response.json();
-    const translated = data.choices[0]?.message?.content?.trim().toLowerCase();
-    
-    if (translated && translated !== cityName.toLowerCase()) {
-      console.log(`AI Translation: ${cityName} -> ${translated}`);
-      return translated;
-    }
-    
-    return cityName.toLowerCase();
-  } catch (error) {
-    console.error('Errore traduzione AI:', error);
-    return cityName.toLowerCase(); // Fallback
-  }
-}
-
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
 
   const normalizedCity = normalizeInput(cityName);
+  
+  // Controlla cache
+  const cached = airportCache.get(normalizedCity);
+  if (cached && (Date.now() - cached.timestamp) < CACHE_EXPIRY) {
+    console.log(`Cache hit per: ${normalizedCity}`);
+    return cached.data;
+  }
 
   // Se è già un codice ICAO, restituiscilo direttamente
   if (/^[A-Z]{4}$/.test(cityName)) {
     console.log(`Codice ICAO già fornito: ${cityName}`);
-    return cityName;
+    const result = cityName;
+    airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+    return result;
   }
 
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
 
   try {
-    // 1. 🆕 Cerca prima con search_name (colonna standardizzata)
-    let { data: searchNameData, error: searchNameError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, search_name, city')
-      .ilike('search_name', normalizedCity)
-      .in('type', ['large_airport', 'medium_airport'])
-      .order('type')
-      .limit(1);
-
-    if (!searchNameError && searchNameData && searchNameData.length > 0) {
-      console.log(`Trovato con search_name: ${normalizedCity} -> ${searchNameData[0].ident} (${searchNameData[0].name})`);
-      const result = searchNameData[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
-    }
-
-    // 2. 🤖 Prova con traduzione AI
-    const englishName = await translateCityToEnglish(cityName);
-    if (englishName && englishName !== normalizedCity) {
-      let { data: translatedData, error: translatedError } = await supabase
+    // 1. 🎯 Cerca con search_name (con gestione errori)
+    try {
+      const { data, error } = await supabase
         .from('Airport 2')
         .select('ident, name, search_name, city')
-        .ilike('search_name', englishName)
+        .ilike('search_name', normalizedCity)
         .in('type', ['large_airport', 'medium_airport'])
         .order('type')
         .limit(1);
 
-      if (!translatedError && translatedData && translatedData.length > 0) {
-        console.log(`Trovato con traduzione AI: ${englishName} -> ${translatedData[0].ident} (${translatedData[0].name})`);
-        const result = translatedData[0].ident;
+      if (!error && data && data.length > 0) {
+        console.log(`Trovato con search_name: ${normalizedCity} -> ${data[0].ident} (${data[0].name})`);
+        const result = data[0].ident;
         airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
         return result;
       }
+    } catch (searchError) {
+      console.log(`search_name query failed, usando fallback: ${searchError.message}`);
     }
 
-    // 3. Fallback: logica originale per aeroporti principali
-    // 3. Fallback: logica originale per aeroporti principali
+    // 2. Fallback: logica originale per aeroporti principali
     let { data: majorAirports, error: majorError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -133,9 +84,12 @@ async function getCityToICAO(cityName) {
 
     if (!majorError && majorAirports && majorAirports.length > 0) {
       console.log(`Trovato aeroporto principale: ${majorAirports[0].ident} (${majorAirports[0].name})`);
-      return majorAirports[0].ident;
+      const result = majorAirports[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // 3. Cerca aeroporti medi
     let { data: mediumAirports, error: mediumError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -145,9 +99,12 @@ async function getCityToICAO(cityName) {
 
     if (!mediumError && mediumAirports && mediumAirports.length > 0) {
       console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
-      return mediumAirports[0].ident;
+      const result = mediumAirports[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // 4. Cerca per nome esatto
     let { data: exactNameData, error: exactNameError } = await supabase
       .from('Airport 2')
       .select('ident, name')
@@ -156,9 +113,12 @@ async function getCityToICAO(cityName) {
 
     if (!exactNameError && exactNameData && exactNameData.length > 0) {
       console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
-      return exactNameData[0].ident;
+      const result = exactNameData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // 5. Cerca per comune esatto
     let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -167,9 +127,12 @@ async function getCityToICAO(cityName) {
 
     if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
       console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
-      return exactMunicipalityData[0].ident;
+      const result = exactMunicipalityData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // 6. Cerca per nome parziale
     let { data: partialNameData, error: partialNameError } = await supabase
       .from('Airport 2')
       .select('ident, name')
@@ -178,9 +141,12 @@ async function getCityToICAO(cityName) {
 
     if (!partialNameError && partialNameData && partialNameData.length > 0) {
       console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
-      return partialNameData[0].ident;
+      const result = partialNameData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // 7. Cerca per comune parziale
     let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -189,9 +155,12 @@ async function getCityToICAO(cityName) {
 
     if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
       console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
-      return partialMunicipalityData[0].ident;
+      const result = partialMunicipalityData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // 8. Cerca in qualsiasi campo (ultima opzione)
     let { data: anyFieldData, error: anyFieldError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -201,7 +170,9 @@ async function getCityToICAO(cityName) {
 
     if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
       console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
-      return anyFieldData[0].ident;
+      const result = anyFieldData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
     console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
@@ -253,8 +224,8 @@ export default async function handler(req, res) {
       return res.status(400).json({
         error: 'Mancano dati di partenza o arrivo',
         required_format: {
-          from: "Nome città o codice ICAO (es. 'Milano' o 'LIML')",
-          to: "Nome città o codice ICAO (es. 'Nizza' o 'LFMN')",
+          from: "Nome città o codice ICAO (es. 'milan' o 'LIML')",
+          to: "Nome città o codice ICAO (es. 'malaga' o 'LEMG')",
           date: "Data in formato YYYY-MM-DD (opzionale)",
           returnDate: "Data di ritorno in formato YYYY-MM-DD (per A/R)",
           tripType: "'oneway' o 'roundtrip'",
@@ -487,11 +458,7 @@ export default async function handler(req, res) {
         totalCost = outboundCost;
       }
       
-      const hours = Math.floor(flightTime);
-      const minutes = Math.round((flightTime - hours) * 60);
-      const formatted = `${hours > 0 ? hours + 'h ' : ''}${minutes}min`;
-
-      // Calcola orari di arrivo con logica same-day
+      // Calcola orari con logica same-day
       const departureTime = time || "12:00";
       let returnDepartureTime = null;
       
@@ -521,6 +488,10 @@ export default async function handler(req, res) {
       const returnArrival = returnDepartureTime 
         ? calculateArrivalTime(returnDepartureTime, flightTime) 
         : null;
+
+      const hours = Math.floor(flightTime);
+      const minutes = Math.round((flightTime - hours) * 60);
+      const formatted = `${hours > 0 ? hours + 'h ' : ''}${minutes}min`;
 
       return {
         jet_id: jet.id,
