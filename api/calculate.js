@@ -35,16 +35,26 @@ async function getCityToICAO(cityName) {
   if (!cityName) return null;
 
   const normalizedCity = normalizeInput(cityName);
+  
+  // Controlla cache
+  const cached = airportCache.get(normalizedCity);
+  if (cached && (Date.now() - cached.timestamp) < CACHE_EXPIRY) {
+    console.log(`Cache hit per: ${normalizedCity}`);
+    return cached.data;
+  }
 
   // Se è già un codice ICAO, restituiscilo direttamente
   if (/^[A-Z]{4}$/.test(cityName)) {
     console.log(`Codice ICAO già fornito: ${cityName}`);
-    return cityName;
+    const result = cityName;
+    airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+    return result;
   }
 
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
 
   try {
+    // Cerca prima aeroporti principali
     let { data: majorAirports, error: majorError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -54,9 +64,12 @@ async function getCityToICAO(cityName) {
 
     if (!majorError && majorAirports && majorAirports.length > 0) {
       console.log(`Trovato aeroporto principale: ${majorAirports[0].ident} (${majorAirports[0].name})`);
-      return majorAirports[0].ident;
+      const result = majorAirports[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca aeroporti medi
     let { data: mediumAirports, error: mediumError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -66,20 +79,26 @@ async function getCityToICAO(cityName) {
 
     if (!mediumError && mediumAirports && mediumAirports.length > 0) {
       console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
-      return mediumAirports[0].ident;
+      const result = mediumAirports[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca per nome esatto (migliora la query)
     let { data: exactNameData, error: exactNameError } = await supabase
       .from('Airport 2')
       .select('ident, name')
-      .ilike('name', normalizedCity)
+      .or(`name.ilike.${normalizedCity},name.ilike.%${normalizedCity} airport%,name.ilike.%${normalizedCity} international%`)
       .limit(1);
 
     if (!exactNameError && exactNameData && exactNameData.length > 0) {
       console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
-      return exactNameData[0].ident;
+      const result = exactNameData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca per comune esatto
     let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -88,9 +107,30 @@ async function getCityToICAO(cityName) {
 
     if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
       console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
-      return exactMunicipalityData[0].ident;
+      const result = exactMunicipalityData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca con varianti comuni delle città
+    const cityVariants = getCityVariants(normalizedCity);
+    for (const variant of cityVariants) {
+      let { data: variantData, error: variantError } = await supabase
+        .from('Airport 2')
+        .select('ident, name, municipality')
+        .or(`municipality.ilike.%${variant}%,name.ilike.%${variant}%`)
+        .eq('type', 'large_airport')
+        .limit(1);
+
+      if (!variantError && variantData && variantData.length > 0) {
+        console.log(`Trovato con variante ${variant}: ${variantData[0].ident} (${variantData[0].name})`);
+        const result = variantData[0].ident;
+        airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+        return result;
+      }
+    }
+
+    // Cerca per nome parziale
     let { data: partialNameData, error: partialNameError } = await supabase
       .from('Airport 2')
       .select('ident, name')
@@ -99,9 +139,12 @@ async function getCityToICAO(cityName) {
 
     if (!partialNameError && partialNameData && partialNameData.length > 0) {
       console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
-      return partialNameData[0].ident;
+      const result = partialNameData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca per comune parziale
     let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -110,9 +153,12 @@ async function getCityToICAO(cityName) {
 
     if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
       console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
-      return partialMunicipalityData[0].ident;
+      const result = partialMunicipalityData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
+    // Cerca in qualsiasi campo (ultima opzione)
     let { data: anyFieldData, error: anyFieldError } = await supabase
       .from('Airport 2')
       .select('ident, name, municipality')
@@ -122,7 +168,9 @@ async function getCityToICAO(cityName) {
 
     if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
       console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
-      return anyFieldData[0].ident;
+      const result = anyFieldData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
     }
 
     console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
@@ -132,6 +180,46 @@ async function getCityToICAO(cityName) {
     console.error(`Errore nella ricerca dell'aeroporto per ${cityName}:`, error);
     return null;
   }
+}
+
+// Funzione per gestire varianti comuni delle città
+function getCityVariants(cityName) {
+  const variants = [];
+  
+  // Varianti comuni
+  const cityMappings = {
+    'milano': ['milan', 'mailand'],
+    'milan': ['milano', 'mailand'],
+    'roma': ['rome'],
+    'rome': ['roma'],
+    'torino': ['turin'],
+    'turin': ['torino'],
+    'firenze': ['florence'],
+    'florence': ['firenze'],
+    'venezia': ['venice'],
+    'venice': ['venezia'],
+    'napoli': ['naples'],
+    'naples': ['napoli'],
+    'parigi': ['paris'],
+    'paris': ['parigi'],
+    'londra': ['london'],
+    'london': ['londra'],
+    'madrid': ['madrid'],
+    'barcellona': ['barcelona'],
+    'barcelona': ['barcellona'],
+    'berlino': ['berlin'],
+    'berlin': ['berlino'],
+    'monaco': ['munich', 'munchen'],
+    'munich': ['monaco', 'munchen'],
+    'vienna': ['wien'],
+    'wien': ['vienna']
+  };
+  
+  if (cityMappings[cityName]) {
+    variants.push(...cityMappings[cityName]);
+  }
+  
+  return variants;
 }
 
 // Calcola costo repositioning per voli A/R
