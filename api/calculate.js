@@ -314,8 +314,18 @@ export default async function handler(req, res) {
       }
     }
 
-    // Pre-calcola orario di ritorno per l'input (usando il primo jet come riferimento per il tempo di volo)
-    const sampleJet = jets.find(j => j.speed_knots || j.speed);
+    const jetsNearby = jets.filter((jet) => {
+      const home = jet.homebase?.trim().toUpperCase();
+      const base = AIRPORTS[home];
+      if (!base) return false;
+      const dist = getDistanceKm(dep.lat, dep.lon, base.lat, base.lon);
+      return dist <= 500;
+    });
+
+    const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
+
+    // Pre-calcola orario di ritorno per l'input (usando il primo jet come riferimento)
+    const sampleJet = jetsNearby.find(j => j.speed_knots || j.speed);
     let inputReturnTime = returnTime;
     
     if (tripType === 'roundtrip' && !returnTime && sampleJet) {
@@ -339,16 +349,6 @@ export default async function handler(req, res) {
         inputReturnTime = departureTime;
       }
     }
-
-    const jetsNearby = jets.filter((jet) => {
-      const home = jet.homebase?.trim().toUpperCase();
-      const base = AIRPORTS[home];
-      if (!base) return false;
-      const dist = getDistanceKm(dep.lat, dep.lon, base.lat, base.lon);
-      return dist <= 500;
-    });
-
-    const distance = getDistanceKm(dep.lat, dep.lon, arr.lat, arr.lon);
 
     const results = jetsNearby.map((jet) => {
       const knots = jet.speed_knots || jet.speed || null;
