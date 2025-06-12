@@ -1,4 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
+try {
+    // 1. Cerca prima per città standardizzata (campo city)
+    let {import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -31,6 +33,46 @@ function normalizeInput(str) {
     .trim();
 }
 
+// Traduce nome città in inglese standard usando AI
+async function translateCityToEnglish(cityName) {
+  if (!cityName) return null;
+  
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: "gpt-3.5-turbo",
+        messages: [{
+          role: "system",
+          content: "Translate city names to standard English. Return only the English city name, lowercase, no accents. Examples: Milano->milan, Parigi->paris, Londra->london, München->munich, 北京->beijing"
+        }, {
+          role: "user", 
+          content: cityName
+        }],
+        max_tokens: 20,
+        temperature: 0
+      })
+    });
+    
+    const data = await response.json();
+    const translated = data.choices[0]?.message?.content?.trim().toLowerCase();
+    
+    if (translated && translated !== cityName.toLowerCase()) {
+      console.log(`AI Translation: ${cityName} -> ${translated}`);
+      return translated;
+    }
+    
+    return cityName.toLowerCase();
+  } catch (error) {
+    console.error('Errore traduzione AI:', error);
+    return cityName.toLowerCase(); // Fallback
+  }
+}
+
 async function getCityToICAO(cityName) {
   if (!cityName) return null;
 
@@ -45,6 +87,43 @@ async function getCityToICAO(cityName) {
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
 
   try {
+    // 1. 🆕 Cerca prima con search_name (colonna standardizzata)
+    let { data: searchNameData, error: searchNameError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, search_name, city')
+      .ilike('search_name', normalizedCity)
+      .in('type', ['large_airport', 'medium_airport'])
+      .order('type')
+      .limit(1);
+
+    if (!searchNameError && searchNameData && searchNameData.length > 0) {
+      console.log(`Trovato con search_name: ${normalizedCity} -> ${searchNameData[0].ident} (${searchNameData[0].name})`);
+      const result = searchNameData[0].ident;
+      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+      return result;
+    }
+
+    // 2. 🤖 Prova con traduzione AI
+    const englishName = await translateCityToEnglish(cityName);
+    if (englishName && englishName !== normalizedCity) {
+      let { data: translatedData, error: translatedError } = await supabase
+        .from('Airport 2')
+        .select('ident, name, search_name, city')
+        .ilike('search_name', englishName)
+        .in('type', ['large_airport', 'medium_airport'])
+        .order('type')
+        .limit(1);
+
+      if (!translatedError && translatedData && translatedData.length > 0) {
+        console.log(`Trovato con traduzione AI: ${englishName} -> ${translatedData[0].ident} (${translatedData[0].name})`);
+        const result = translatedData[0].ident;
+        airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
+        return result;
+      }
+    }
+
+    // 3. Fallback: logica originale per aeroporti principali
+    // 3. Fallback: logica originale per aeroporti principali
     let { data: majorAirports, error: majorError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
