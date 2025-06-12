@@ -35,42 +35,16 @@ async function getCityToICAO(cityName) {
   if (!cityName) return null;
 
   const normalizedCity = normalizeInput(cityName);
-  
-  // Controlla cache
-  const cached = airportCache.get(normalizedCity);
-  if (cached && (Date.now() - cached.timestamp) < CACHE_EXPIRY) {
-    console.log(`Cache hit per: ${normalizedCity}`);
-    return cached.data;
-  }
 
   // Se è già un codice ICAO, restituiscilo direttamente
   if (/^[A-Z]{4}$/.test(cityName)) {
     console.log(`Codice ICAO già fornito: ${cityName}`);
-    const result = cityName;
-    airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-    return result;
+    return cityName;
   }
 
   console.log(`Cercando codice ICAO per: ${normalizedCity}`);
 
   try {
-    // 1. Cerca aeroporti principali con match esatto municipality
-    let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
-      .from('Airport 2')
-      .select('ident, name, municipality, type')
-      .ilike('municipality', normalizedCity)
-      .in('type', ['large_airport', 'medium_airport'])
-      .order('type')
-      .limit(1);
-
-    if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
-      console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
-      const result = exactMunicipalityData[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
-    }
-
-    // 2. Cerca aeroporti principali con municipality che contiene la città
     let { data: majorAirports, error: majorError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -80,12 +54,9 @@ async function getCityToICAO(cityName) {
 
     if (!majorError && majorAirports && majorAirports.length > 0) {
       console.log(`Trovato aeroporto principale: ${majorAirports[0].ident} (${majorAirports[0].name})`);
-      const result = majorAirports[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
+      return majorAirports[0].ident;
     }
 
-    // 3. Cerca aeroporti medi
     let { data: mediumAirports, error: mediumError } = await supabase
       .from('Airport 2')
       .select('ident, name, type, municipality')
@@ -95,59 +66,63 @@ async function getCityToICAO(cityName) {
 
     if (!mediumError && mediumAirports && mediumAirports.length > 0) {
       console.log(`Trovato aeroporto medio: ${mediumAirports[0].ident} (${mediumAirports[0].name})`);
-      const result = mediumAirports[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
+      return mediumAirports[0].ident;
     }
 
-    // 4. Cerca per nome esatto dell'aeroporto (senza accenti)
     let { data: exactNameData, error: exactNameError } = await supabase
       .from('Airport 2')
-      .select('ident, name, municipality, type')
-      .ilike('name', `%${normalizedCity}%`)
-      .in('type', ['large_airport', 'medium_airport'])
-      .order('type')
+      .select('ident, name')
+      .ilike('name', normalizedCity)
       .limit(1);
 
     if (!exactNameError && exactNameData && exactNameData.length > 0) {
-      console.log(`Trovato per nome: ${exactNameData[0].ident} (${exactNameData[0].name})`);
-      const result = exactNameData[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
+      console.log(`Trovato per nome esatto: ${exactNameData[0].ident} (${exactNameData[0].name})`);
+      return exactNameData[0].ident;
     }
 
-    // 5. Cerca con versione originale (con accenti) se normalizzata non ha funzionato
-    if (cityName !== normalizedCity) {
-      let { data: originalNameData, error: originalNameError } = await supabase
-        .from('Airport 2')
-        .select('ident, name, municipality, type')
-        .or(`municipality.ilike.%${cityName}%,name.ilike.%${cityName}%`)
-        .in('type', ['large_airport', 'medium_airport'])
-        .order('type')
-        .limit(1);
+    let { data: exactMunicipalityData, error: exactMunicipalityError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, municipality')
+      .ilike('municipality', normalizedCity)
+      .limit(1);
 
-      if (!originalNameError && originalNameData && originalNameData.length > 0) {
-        console.log(`Trovato con nome originale: ${originalNameData[0].ident} (${originalNameData[0].name})`);
-        const result = originalNameData[0].ident;
-        airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-        return result;
-      }
+    if (!exactMunicipalityError && exactMunicipalityData && exactMunicipalityData.length > 0) {
+      console.log(`Trovato per comune esatto: ${exactMunicipalityData[0].ident} (${exactMunicipalityData[0].name})`);
+      return exactMunicipalityData[0].ident;
     }
 
-    // 6. Ricerca estesa in tutti i tipi (fallback)
+    let { data: partialNameData, error: partialNameError } = await supabase
+      .from('Airport 2')
+      .select('ident, name')
+      .ilike('name', `%${normalizedCity}%`)
+      .limit(1);
+
+    if (!partialNameError && partialNameData && partialNameData.length > 0) {
+      console.log(`Trovato per nome parziale: ${partialNameData[0].ident} (${partialNameData[0].name})`);
+      return partialNameData[0].ident;
+    }
+
+    let { data: partialMunicipalityData, error: partialMunicipalityError } = await supabase
+      .from('Airport 2')
+      .select('ident, name, municipality')
+      .ilike('municipality', `%${normalizedCity}%`)
+      .limit(1);
+
+    if (!partialMunicipalityError && partialMunicipalityData && partialMunicipalityData.length > 0) {
+      console.log(`Trovato per comune parziale: ${partialMunicipalityData[0].ident} (${partialMunicipalityData[0].name})`);
+      return partialMunicipalityData[0].ident;
+    }
+
     let { data: anyFieldData, error: anyFieldError } = await supabase
       .from('Airport 2')
-      .select('ident, name, municipality, type')
-      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%`)
-      .in('type', ['large_airport', 'medium_airport', 'small_airport'])
+      .select('ident, name, municipality')
+      .or(`name.ilike.%${normalizedCity}%,municipality.ilike.%${normalizedCity}%,ident.ilike.%${normalizedCity}%,iso_region.ilike.%${normalizedCity}%`)
       .order('type')
       .limit(1);
 
     if (!anyFieldError && anyFieldData && anyFieldData.length > 0) {
-      console.log(`Trovato in ricerca estesa: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
-      const result = anyFieldData[0].ident;
-      airportCache.set(normalizedCity, { data: result, timestamp: Date.now() });
-      return result;
+      console.log(`Trovato in qualsiasi campo: ${anyFieldData[0].ident} (${anyFieldData[0].name})`);
+      return anyFieldData[0].ident;
     }
 
     console.log(`Nessun aeroporto trovato per: ${normalizedCity}`);
