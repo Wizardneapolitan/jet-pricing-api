@@ -386,10 +386,13 @@ export default async function handler(req, res) {
       const minutes = Math.round((flightTime - hours) * 60);
       const formatted = `${hours > 0 ? hours + 'h ' : ''}${minutes}min`;
 
-      // Calcola orari di arrivo
-      const departureArrival = calculateArrivalTime(time, flightTime);
-      const returnArrival = (tripType === 'roundtrip' && returnTime) 
-        ? calculateArrivalTime(returnTime, flightTime) 
+      // Calcola orari di arrivo (con default 12:00 se mancante)
+      const departureTime = time || "12:00";
+      const returnDepartureTime = (tripType === 'roundtrip') ? (returnTime || "12:00") : null;
+      
+      const departureArrival = calculateArrivalTime(departureTime, flightTime);
+      const returnArrival = returnDepartureTime 
+        ? calculateArrivalTime(returnDepartureTime, flightTime) 
         : null;
 
       return {
@@ -410,9 +413,9 @@ export default async function handler(req, res) {
         repositioning_cost: tripType === 'roundtrip' ? Math.round(repositioningCost) : null,
         total_price: Math.round(totalCost),
         days_between: tripType === 'roundtrip' ? daysBetween : null,
-        departure_time: time || null,
+        departure_time: departureTime,
         departure_arrival: departureArrival,
-        return_departure_time: (tripType === 'roundtrip') ? returnTime || null : null,
+        return_departure_time: returnDepartureTime,
         return_arrival: returnArrival,
       };
     });
@@ -430,8 +433,8 @@ export default async function handler(req, res) {
         date: formattedDate || null,
         return_date: formattedReturnDate || null,
         trip_type: tripType,
-        time: time || null,
-        return_time: (tripType === 'roundtrip') ? returnTime || null : null,
+        time: time || "12:00",
+        return_time: (tripType === 'roundtrip') ? returnTime || "12:00" : null,
         pax: pax || 4
       },
       jets: results
