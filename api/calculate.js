@@ -134,6 +134,25 @@ async function getCityToICAO(cityName) {
   }
 }
 
+// Calcola orario di arrivo stimato
+function calculateArrivalTime(departureTime, flightTimeHours) {
+  if (!departureTime) return null;
+  
+  try {
+    const [hours, minutes] = departureTime.split(':').map(Number);
+    const depMinutes = hours * 60 + minutes;
+    const flightMinutes = flightTimeHours * 60;
+    const arrMinutes = depMinutes + flightMinutes;
+    
+    const arrHours = Math.floor(arrMinutes / 60) % 24;
+    const arrMins = Math.round(arrMinutes % 60);
+    
+    return `${arrHours.toString().padStart(2, '0')}:${arrMins.toString().padStart(2, '0')}`;
+  } catch (error) {
+    return null;
+  }
+}
+
 // Calcola costo repositioning per voli A/R
 function calculateRepositioningCost(jet, daysBetween) {
   const parkingCostPerDay = jet.parking_cost_per_day || 500; // Default €500/giorno
@@ -146,7 +165,7 @@ export default async function handler(req, res) {
   try {
     console.log('Richiesta ricevuta:', req.body);
 
-    let { departure, arrival, from, to, pax, date, time, returnDate, tripType = 'oneway' } = req.body;
+    let { departure, arrival, from, to, pax, date, time, returnDate, returnTime, tripType = 'oneway' } = req.body;
 
     const departureInput = departure || from || '';
     const arrivalInput = arrival || to || '';
@@ -160,7 +179,8 @@ export default async function handler(req, res) {
           date: "Data in formato YYYY-MM-DD (opzionale)",
           returnDate: "Data di ritorno in formato YYYY-MM-DD (per A/R)",
           tripType: "'oneway' o 'roundtrip'",
-          time: "Orario in formato HH:MM (opzionale)",
+          time: "Orario partenza in formato HH:MM (opzionale)",
+          returnTime: "Orario ritorno in formato HH:MM (opzionale per A/R)",
           pax: "Numero passeggeri (opzionale, default: 4)"
         }
       });
@@ -366,6 +386,12 @@ export default async function handler(req, res) {
       const minutes = Math.round((flightTime - hours) * 60);
       const formatted = `${hours > 0 ? hours + 'h ' : ''}${minutes}min`;
 
+      // Calcola orari di arrivo
+      const departureArrival = calculateArrivalTime(time, flightTime);
+      const returnArrival = (tripType === 'roundtrip' && returnTime) 
+        ? calculateArrivalTime(returnTime, flightTime) 
+        : null;
+
       return {
         jet_id: jet.id,
         model: jet.name || null,
@@ -384,6 +410,10 @@ export default async function handler(req, res) {
         repositioning_cost: tripType === 'roundtrip' ? Math.round(repositioningCost) : null,
         total_price: Math.round(totalCost),
         days_between: tripType === 'roundtrip' ? daysBetween : null,
+        departure_time: time || null,
+        departure_arrival: departureArrival,
+        return_departure_time: (tripType === 'roundtrip') ? returnTime || null : null,
+        return_arrival: returnArrival,
       };
     });
 
@@ -401,6 +431,7 @@ export default async function handler(req, res) {
         return_date: formattedReturnDate || null,
         trip_type: tripType,
         time: time || null,
+        return_time: (tripType === 'roundtrip') ? returnTime || null : null,
         pax: pax || 4
       },
       jets: results
