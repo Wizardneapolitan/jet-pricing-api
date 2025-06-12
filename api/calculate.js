@@ -386,9 +386,11 @@ export default async function handler(req, res) {
       const minutes = Math.round((flightTime - hours) * 60);
       const formatted = `${hours > 0 ? hours + 'h ' : ''}${minutes}min`;
 
-      // Calcola orari di arrivo (con default 12:00 se mancante)
+      // Calcola orari di arrivo (logica: se time specificato, usalo per entrambi, altrimenti default 12:00)
       const departureTime = time || "12:00";
-      const returnDepartureTime = (tripType === 'roundtrip') ? (returnTime || "12:00") : null;
+      const returnDepartureTime = (tripType === 'roundtrip') 
+        ? (returnTime || departureTime) // Usa returnTime se specificato, altrimenti stesso orario dell'andata
+        : null;
       
       const departureArrival = calculateArrivalTime(departureTime, flightTime);
       const returnArrival = returnDepartureTime 
@@ -434,7 +436,7 @@ export default async function handler(req, res) {
         return_date: formattedReturnDate || null,
         trip_type: tripType,
         time: time || "12:00",
-        return_time: (tripType === 'roundtrip') ? returnTime || "12:00" : null,
+        return_time: (tripType === 'roundtrip') ? returnTime || (time || "12:00") : null,
         pax: pax || 4
       },
       jets: results
