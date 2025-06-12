@@ -386,11 +386,31 @@ export default async function handler(req, res) {
       const minutes = Math.round((flightTime - hours) * 60);
       const formatted = `${hours > 0 ? hours + 'h ' : ''}${minutes}min`;
 
-      // Calcola orari di arrivo (logica: se time specificato, usalo per entrambi, altrimenti default 12:00)
+      // Calcola orari di arrivo con logica same-day
       const departureTime = time || "12:00";
-      const returnDepartureTime = (tripType === 'roundtrip') 
-        ? (returnTime || departureTime) // Usa returnTime se specificato, altrimenti stesso orario dell'andata
-        : null;
+      let returnDepartureTime = null;
+      
+      if (tripType === 'roundtrip') {
+        if (returnTime) {
+          // Orario di ritorno specificato esplicitamente
+          returnDepartureTime = returnTime;
+        } else if (daysBetween === 0) {
+          // Same-day: calcola orario automatico (arrivo + 1 ora)
+          const arrivalTime = calculateArrivalTime(departureTime, flightTime);
+          if (arrivalTime) {
+            const [arrHours, arrMinutes] = arrivalTime.split(':').map(Number);
+            const totalMinutes = arrHours * 60 + arrMinutes + 60; // +1 ora
+            const retHours = Math.floor(totalMinutes / 60) % 24;
+            const retMinutes = totalMinutes % 60;
+            returnDepartureTime = `${retHours.toString().padStart(2, '0')}:${retMinutes.toString().padStart(2, '0')}`;
+          } else {
+            returnDepartureTime = departureTime; // Fallback
+          }
+        } else {
+          // Multi-day: usa stesso orario dell'andata
+          returnDepartureTime = departureTime;
+        }
+      }
       
       const departureArrival = calculateArrivalTime(departureTime, flightTime);
       const returnArrival = returnDepartureTime 
@@ -436,7 +456,7 @@ export default async function handler(req, res) {
         return_date: formattedReturnDate || null,
         trip_type: tripType,
         time: time || "12:00",
-        return_time: (tripType === 'roundtrip') ? returnTime || (time || "12:00") : null,
+        return_time: (tripType === 'roundtrip') ? returnTime || returnDepartureTime : null,
         pax: pax || 4
       },
       jets: results
