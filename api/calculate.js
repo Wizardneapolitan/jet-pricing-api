@@ -314,6 +314,32 @@ export default async function handler(req, res) {
       }
     }
 
+    // Pre-calcola orario di ritorno per l'input (usando il primo jet come riferimento per il tempo di volo)
+    const sampleJet = jets.find(j => j.speed_knots || j.speed);
+    let inputReturnTime = returnTime;
+    
+    if (tripType === 'roundtrip' && !returnTime && sampleJet) {
+      const sampleSpeed = (sampleJet.speed_knots || sampleJet.speed) * 1.852;
+      const sampleFlightTime = distance / sampleSpeed;
+      const departureTime = time || "12:00";
+      
+      if (daysBetween === 0) {
+        // Same-day: calcola orario automatico
+        const arrivalTime = calculateArrivalTime(departureTime, sampleFlightTime);
+        if (arrivalTime) {
+          const [arrHours, arrMinutes] = arrivalTime.split(':').map(Number);
+          const totalMinutes = arrHours * 60 + arrMinutes + 60; // +1 ora
+          const retHours = Math.floor(totalMinutes / 60) % 24;
+          const retMinutes = totalMinutes % 60;
+          inputReturnTime = `${retHours.toString().padStart(2, '0')}:${retMinutes.toString().padStart(2, '0')}`;
+        } else {
+          inputReturnTime = departureTime;
+        }
+      } else {
+        inputReturnTime = departureTime;
+      }
+    }
+
     const jetsNearby = jets.filter((jet) => {
       const home = jet.homebase?.trim().toUpperCase();
       const base = AIRPORTS[home];
@@ -456,7 +482,7 @@ export default async function handler(req, res) {
         return_date: formattedReturnDate || null,
         trip_type: tripType,
         time: time || "12:00",
-        return_time: (tripType === 'roundtrip') ? returnTime || returnDepartureTime : null,
+        return_time: (tripType === 'roundtrip') ? inputReturnTime : null,
         pax: pax || 4
       },
       jets: results
