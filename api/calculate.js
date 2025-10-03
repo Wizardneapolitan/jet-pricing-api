@@ -203,7 +203,7 @@ function calculateArrivalTime(departureTime, flightTimeHours) {
   }
 }
 
-// Calcola costo repositioning per voli AR
+// Calcola costo repositioning per voli A/R
 function calculateRepositioningCost(jet, daysBetween) {
   const parkingCostPerDay = jet.parking_cost_per_day || 500; // Default €500/giorno
   const repositioningHours = 1; // Tempo stimato per riposizionamento
@@ -213,79 +213,6 @@ function calculateRepositioningCost(jet, daysBetween) {
 
 export default async function handler(req, res) {
   try {
-    // === CONTROLLI DI SICUREZZA SENZA API KEY ===
-    const userAgent = req.headers['user-agent'];
-    const contentType = req.headers['content-type'];
-    const host = req.headers.host;
-    
-    console.log('🔍 DEBUG INFO:');
-    console.log('  User-Agent:', userAgent);
-    console.log('  Content-Type:', contentType);
-    console.log('  Host:', host);
-    console.log('  Method:', req.method);
-    
-    // Verifica base: deve essere una richiesta POST con JSON
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
-    
-    if (!contentType || !contentType.includes('application/json')) {
-      console.log('❌ ACCESSO NEGATO - Content-Type non valido');
-      return res.status(400).json({ 
-        error: 'Invalid content type',
-        expected: 'application/json'
-      });
-    }
-    
-    // Blocca richieste sospette (bot, crawler, etc)
-    if (userAgent) {
-      const suspiciousAgents = [
-        'bot', 'crawler', 'spider', 'scraper', 'curl', 'wget', 
-        'python', 'requests', 'axios', 'postman', 'insomnia'
-      ];
-      
-      const isSuspicious = suspiciousAgents.some(agent => 
-        userAgent.toLowerCase().includes(agent)
-      );
-      
-      if (isSuspicious) {
-        console.log('❌ ACCESSO NEGATO - User-Agent sospetto:', userAgent);
-        return res.status(403).json({ 
-          error: 'Access denied',
-          reason: 'Suspicious user agent'
-        });
-      }
-    }
-    
-    // Rate limiting semplice basato su timestamp
-    const now = Date.now();
-    const lastRequest = global.lastApiRequest || 0;
-    const timeDiff = now - lastRequest;
-    
-    // Minimo 1 secondo tra richieste
-    if (timeDiff < 1000) {
-      console.log('❌ RATE LIMIT - Troppe richieste rapide');
-      return res.status(429).json({ 
-        error: 'Too many requests',
-        retry_after: 1
-      });
-    }
-    
-    global.lastApiRequest = now;
-    
-    console.log('✅ ACCESSO AUTORIZZATO - Controlli di base superati');
-    
-    // CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-      console.log('📋 OPTIONS request');
-      return res.status(200).end();
-    }
-    // === FINE CONTROLLI DI SICUREZZA ===
-
     console.log('Richiesta ricevuta:', req.body);
 
     let { departure, arrival, from, to, pax, date, time, returnDate, returnTime, tripType = 'oneway' } = req.body;
