@@ -203,7 +203,7 @@ function calculateArrivalTime(departureTime, flightTimeHours) {
   }
 }
 
-// Calcola costo repositioning per voli A/R
+// Calcola costo repositioning per voli AR
 function calculateRepositioningCost(jet, daysBetween) {
   const parkingCostPerDay = jet.parking_cost_per_day || 500; // Default €500/giorno
   const repositioningHours = 1; // Tempo stimato per riposizionamento
