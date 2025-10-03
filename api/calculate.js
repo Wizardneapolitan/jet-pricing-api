@@ -212,152 +212,79 @@ function calculateRepositioningCost(jet, daysBetween) {
 }
 
 export default async function handler(req, res) {
-  // Domain protection - CONTROLLI DI SICUREZZA MIGLIORATI
-  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || [];
-  
-  // Ottieni informazioni sulla richiesta
-  const origin = req.headers.origin;
-  const referer = req.headers.referer;
-  const host = req.headers.host;
-  const userAgent = req.headers['user-agent'];
-  
-  // Debug logging (rimuovi dopo il fix)
-  console.log('🔍 DEBUG INFO:');
-  console.log('  Origin:', origin);
-  console.log('  Referer:', referer);
-  console.log('  Host:', host);
-  console.log('  User-Agent:', userAgent);
-  console.log('  Allowed Origins:', allowedOrigins);
-  
-  // Logica di autorizzazione migliorata
-  let isAuthorized = false;
-  let authMethod = '';
-  
-  // Caso 1: Header Origin presente
-  if (origin) {
-    isAuthorized = allowedOrigins.some(allowed => {
-      // Controlla match esatto
-      if (origin === allowed) return true;
-      
-      // Controlla match con protocollo aggiunto
-      if (origin === `https://${allowed}` || origin === `http://${allowed}`) return true;
-      
-      // Controlla match senza protocollo
-      const allowedWithoutProtocol = allowed.replace(/^https?:\/\//, '');
-      if (origin === allowedWithoutProtocol) return true;
-      
-      // Controlla startsWith per entrambi i casi
-      return origin.startsWith(allowed) || origin.startsWith(allowedWithoutProtocol);
-    });
-    authMethod = origin ? 'origin-header' : '';
-  }
-  
-  // Caso 2: Nessun Origin ma Referer presente (common per localhost)
-  else if (referer) {
-    // Estrai il dominio dal referer
-    try {
-      const refererUrl = new URL(referer);
-      const refererOrigin = `${refererUrl.protocol}//${refererUrl.host}`;
-      
+  try {
+    // === INIZIO CONTROLLI DI SICUREZZA ===
+    const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || [];
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+    const host = req.headers.host;
+    
+    console.log('🔍 DEBUG INFO:');
+    console.log('  Origin:', origin);
+    console.log('  Referer:', referer);
+    console.log('  Host:', host);
+    console.log('  Allowed Origins:', allowedOrigins);
+    
+    let isAuthorized = false;
+    let authSource = '';
+    
+    // Caso 1: Header Origin presente
+    if (origin) {
       isAuthorized = allowedOrigins.some(allowed => {
-        return refererOrigin === allowed || refererOrigin.startsWith(allowed);
+        if (origin === allowed) return true;
+        const allowedClean = allowed.replace(/^https?:\/\//, '');
+        if (origin === allowedClean) return true;
+        return origin.startsWith(allowed) || origin.startsWith(allowedClean);
       });
-      authMethod = refererOrigin ? 'referer-header' : '';
-    } catch (e) {
-      console.log('❌ Errore parsing referer:', e.message);
+      authSource = 'origin';
     }
-  }
-  
-  // Caso 3: Richieste localhost dirette (fallback per sviluppo)
-  else if (host && host.includes('localhost')) {
-    const hostOrigin = `http://${host}`;
-    isAuthorized = allowedOrigins.some(allowed => {
-      return hostOrigin === allowed || hostOrigin.startsWith(allowed);
-    });
-    authMethod = hostOrigin ? 'host-header' : '';
-  }
-  
-  // Caso 4: Richieste da Postman/tools (per testing - RIMUOVI IN PRODUZIONE)
-  else if (userAgent && (userAgent.includes('Postman') || userAgent.includes('curl'))) {
-    console.log('⚠️ Richiesta da tool di testing - permettendo temporaneamente');
-    isAuthorized = true;
-    authMethod = 'testing-tool';
-  }
-  
-  console.log(`🔍 Authorization Result: ${isAuthorized ? '✅ AUTORIZZATO' : '❌ NEGATO'} (${authMethod})`);
-  
-  // Blocca se non autorizzato
-  if (!isAuthorized) {
-    console.log('❌ ACCESSO NEGATO - Richiesta bloccata');
-    return res.status(403).json({ 
-      error: 'Access denied - unauthorized access',
-      debug: process.env.NODE_ENV === 'development' ? {
-        origin,
-        referer,
-        host,
-        allowedOrigins
-      } : undefined
-    });
-  }
-  
-  console.log('✅ ACCESSO AUTORIZZATO - Processando richiesta');
-  
-  // CORS headers dinamici
-  const allowOrigin = origin || (referer ? new URL(referer).origin : host ? `http://${host}` : '*');
-  res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-
-  // Handle preflight OPTIONS
-  if (req.method === 'OPTIONS') {
-    console.log('📋 Gestendo richiesta OPTIONS preflight');
-    return res.status(200).end();
-  }
-
-  // Continua solo se è POST
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  try {
-    console.log('🚀 Elaborando richiesta API...');
-    
-    // Qui va il resto del codice della tua API
-    const { from, to, date, time, pax, tripType } = req.body;
-    
-    // Validazione parametri
-    if (!from || !to || !date || !pax) {
-      return res.status(400).json({ 
-        error: 'Parametri mancanti: from, to, date, pax sono obbligatori' 
+    // Caso 2: Referer presente (fallback)
+    else if (referer) {
+      try {
+        const refererUrl = new URL(referer);
+        const refererOrigin = `${refererUrl.protocol}//${refererUrl.host}`;
+        isAuthorized = allowedOrigins.some(allowed => {
+          return refererOrigin === allowed || refererOrigin.startsWith(allowed);
+        });
+        authSource = 'referer';
+      } catch (e) {
+        console.log('❌ Errore parsing referer:', e.message);
+      }
+    }
+    // Caso 3: Host localhost (sviluppo)
+    else if (host && host.includes('localhost')) {
+      const hostOrigin = `http://${host}`;
+      isAuthorized = allowedOrigins.some(allowed => {
+        return hostOrigin === allowed || hostOrigin.startsWith(allowed);
       });
+      authSource = 'host';
     }
     
-    console.log('📤 Parametri validati:', { from, to, date, time, pax, tripType });
+    console.log(`🔍 Authorization: ${isAuthorized ? '✅ AUTORIZZATO' : '❌ NEGATO'} (${authSource})`);
     
-    // QUI INSERISCI IL RESTO DELLA TUA LOGICA API
-    // ... resto del codice per la ricerca voli ...
+    if (!isAuthorized) {
+      console.log('❌ ACCESSO NEGATO');
+      return res.status(403).json({ error: 'Access denied - unauthorized access' });
+    }
     
-    // Esempio risposta (sostituisci con la tua logica)
-    const flightData = {
-      success: true,
-      flights: [],
-      message: 'API protetta e funzionante'
-    };
+    console.log('✅ ACCESSO AUTORIZZATO');
     
-    console.log('✅ Risposta API preparata');
-    return res.status(200).json(flightData);
-    
-  } catch (error) {
-    console.error('❌ Errore nell\'API:', error);
-    return res.status(500).json({ 
-      error: 'Errore interno del server',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-}
-  
-  try {
+    // CORS headers
+    const allowOrigin = origin || (referer ? new URL(referer).origin : '*');
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      console.log('📋 OPTIONS request');
+      return res.status(200).end();
+    }
+
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    // === FINE CONTROLLI DI SICUREZZA ===
+
     console.log('Richiesta ricevuta:', req.body);
 
     let { departure, arrival, from, to, pax, date, time, returnDate, returnTime, tripType = 'oneway' } = req.body;
