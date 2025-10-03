@@ -214,29 +214,38 @@ function calculateRepositioningCost(jet, daysBetween) {
 export default async function handler(req, res) {
   // Domain protection - CONTROLLI DI SICUREZZA
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
-  const origin = req.headers.origin || req.headers.referer;
+  const origin = req.headers.origin || req.headers.referer || req.headers.host;
   
-  // Debug temporaneo (rimuovi dopo il test)
   console.log('🔍 Origin ricevuto:', origin);
+  console.log('🔍 Referer:', req.headers.referer);
+  console.log('🔍 Host:', req.headers.host);
   console.log('🔍 Allowed origins:', allowedOrigins);
-  console.log('🔍 Headers completi:', JSON.stringify(req.headers, null, 2));
   
-  // Controllo più flessibile per localhost e domini autorizzati
-  const isAuthorized = origin && allowedOrigins.some(allowed => {
-    const cleanAllowed = allowed.trim();
-    console.log(`🔍 Confronto: "${origin}" con "${cleanAllowed}"`);
-    return origin === cleanAllowed || origin.startsWith(cleanAllowed);
-  });
+  // Per richieste localhost senza Origin, usa l'header Host
+  let isAuthorized = false;
+  
+  if (origin) {
+    isAuthorized = allowedOrigins.some(allowed => {
+      const cleanAllowed = allowed.trim();
+      return origin === cleanAllowed || origin.startsWith(cleanAllowed);
+    });
+  } else if (req.headers.host && req.headers.host.includes('localhost')) {
+    // Permetti richieste localhost anche senza Origin header
+    const hostUrl = `http://${req.headers.host}`;
+    isAuthorized = allowedOrigins.some(allowed => 
+      hostUrl === allowed.trim() || hostUrl.startsWith(allowed.trim())
+    );
+  }
   
   if (!isAuthorized) {
-    console.log('❌ Accesso negato per origin:', origin);
+    console.log('❌ Accesso negato');
     return res.status(403).json({ error: 'Access denied - unauthorized access' });
   }
   
-  console.log('✅ Accesso autorizzato per origin:', origin);
+  console.log('✅ Accesso autorizzato');
 
   // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
