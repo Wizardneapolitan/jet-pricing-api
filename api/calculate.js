@@ -212,16 +212,30 @@ function calculateRepositioningCost(jet, daysBetween) {
 }
 
 export default async function handler(req, res) {
-  // Domain protection - CONTROLLI DI SICUREZZA RIGOROSI
+  // Domain protection - CONTROLLI DI SICUREZZA
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
   const origin = req.headers.origin || req.headers.referer;
   
-  // BLOCCA se non c'è origin O se non è autorizzato
-  if (!origin || !allowedOrigins.some(allowed => origin.startsWith(allowed.trim()))) {
+  // Debug temporaneo (rimuovi dopo il test)
+  console.log('🔍 Origin ricevuto:', origin);
+  console.log('🔍 Allowed origins:', allowedOrigins);
+  console.log('🔍 Headers completi:', JSON.stringify(req.headers, null, 2));
+  
+  // Controllo più flessibile per localhost e domini autorizzati
+  const isAuthorized = origin && allowedOrigins.some(allowed => {
+    const cleanAllowed = allowed.trim();
+    console.log(`🔍 Confronto: "${origin}" con "${cleanAllowed}"`);
+    return origin === cleanAllowed || origin.startsWith(cleanAllowed);
+  });
+  
+  if (!isAuthorized) {
+    console.log('❌ Accesso negato per origin:', origin);
     return res.status(403).json({ error: 'Access denied - unauthorized access' });
   }
+  
+  console.log('✅ Accesso autorizzato per origin:', origin);
 
-  // CORS headers (solo per origins autorizzati)
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
