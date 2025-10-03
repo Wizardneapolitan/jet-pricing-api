@@ -213,75 +213,76 @@ function calculateRepositioningCost(jet, daysBetween) {
 
 export default async function handler(req, res) {
   try {
-    // === INIZIO CONTROLLI DI SICUREZZA ===
-    const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || [];
-    const origin = req.headers.origin;
-    const referer = req.headers.referer;
+    // === CONTROLLI DI SICUREZZA SENZA API KEY ===
+    const userAgent = req.headers['user-agent'];
+    const contentType = req.headers['content-type'];
     const host = req.headers.host;
     
     console.log('🔍 DEBUG INFO:');
-    console.log('  Origin:', origin);
-    console.log('  Referer:', referer);
+    console.log('  User-Agent:', userAgent);
+    console.log('  Content-Type:', contentType);
     console.log('  Host:', host);
-    console.log('  Allowed Origins:', allowedOrigins);
+    console.log('  Method:', req.method);
     
-    let isAuthorized = false;
-    let authSource = '';
-    
-    // Caso 1: Header Origin presente
-    if (origin) {
-      isAuthorized = allowedOrigins.some(allowed => {
-        if (origin === allowed) return true;
-        const allowedClean = allowed.replace(/^https?:\/\//, '');
-        if (origin === allowedClean) return true;
-        return origin.startsWith(allowed) || origin.startsWith(allowedClean);
-      });
-      authSource = 'origin';
+    // Verifica base: deve essere una richiesta POST con JSON
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
     }
-    // Caso 2: Referer presente (fallback)
-    else if (referer) {
-      try {
-        const refererUrl = new URL(referer);
-        const refererOrigin = `${refererUrl.protocol}//${refererUrl.host}`;
-        isAuthorized = allowedOrigins.some(allowed => {
-          return refererOrigin === allowed || refererOrigin.startsWith(allowed);
+    
+    if (!contentType || !contentType.includes('application/json')) {
+      console.log('❌ ACCESSO NEGATO - Content-Type non valido');
+      return res.status(400).json({ 
+        error: 'Invalid content type',
+        expected: 'application/json'
+      });
+    }
+    
+    // Blocca richieste sospette (bot, crawler, etc)
+    if (userAgent) {
+      const suspiciousAgents = [
+        'bot', 'crawler', 'spider', 'scraper', 'curl', 'wget', 
+        'python', 'requests', 'axios', 'postman', 'insomnia'
+      ];
+      
+      const isSuspicious = suspiciousAgents.some(agent => 
+        userAgent.toLowerCase().includes(agent)
+      );
+      
+      if (isSuspicious) {
+        console.log('❌ ACCESSO NEGATO - User-Agent sospetto:', userAgent);
+        return res.status(403).json({ 
+          error: 'Access denied',
+          reason: 'Suspicious user agent'
         });
-        authSource = 'referer';
-      } catch (e) {
-        console.log('❌ Errore parsing referer:', e.message);
       }
     }
-    // Caso 3: Host localhost (sviluppo)
-    else if (host && host.includes('localhost')) {
-      const hostOrigin = `http://${host}`;
-      isAuthorized = allowedOrigins.some(allowed => {
-        return hostOrigin === allowed || hostOrigin.startsWith(allowed);
+    
+    // Rate limiting semplice basato su timestamp
+    const now = Date.now();
+    const lastRequest = global.lastApiRequest || 0;
+    const timeDiff = now - lastRequest;
+    
+    // Minimo 1 secondo tra richieste
+    if (timeDiff < 1000) {
+      console.log('❌ RATE LIMIT - Troppe richieste rapide');
+      return res.status(429).json({ 
+        error: 'Too many requests',
+        retry_after: 1
       });
-      authSource = 'host';
     }
     
-    console.log(`🔍 Authorization: ${isAuthorized ? '✅ AUTORIZZATO' : '❌ NEGATO'} (${authSource})`);
+    global.lastApiRequest = now;
     
-    if (!isAuthorized) {
-      console.log('❌ ACCESSO NEGATO');
-      return res.status(403).json({ error: 'Access denied - unauthorized access' });
-    }
-    
-    console.log('✅ ACCESSO AUTORIZZATO');
+    console.log('✅ ACCESSO AUTORIZZATO - Controlli di base superati');
     
     // CORS headers
-    const allowOrigin = origin || (referer ? new URL(referer).origin : '*');
-    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
       console.log('📋 OPTIONS request');
       return res.status(200).end();
-    }
-
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
     }
     // === FINE CONTROLLI DI SICUREZZA ===
 
