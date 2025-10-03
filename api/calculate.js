@@ -212,6 +212,25 @@ function calculateRepositioningCost(jet, daysBetween) {
 }
 
 export default async function handler(req, res) {
+  // Domain protection - CONTROLLI DI SICUREZZA
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [];
+  const origin = req.headers.origin || req.headers.referer;
+  
+  if (origin && !allowedOrigins.some(allowed => origin.startsWith(allowed.trim()))) {
+    return res.status(403).json({ error: 'Access denied from this domain' });
+  }
+
+  // CORS headers
+  if (allowedOrigins.some(allowed => origin?.startsWith(allowed.trim()))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
   try {
     console.log('Richiesta ricevuta:', req.body);
 
